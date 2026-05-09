@@ -953,9 +953,16 @@ async function viewStazioneAsync() {
     ${elemHtml}
   `);
 
-  // Nasconde i pulsanti speech se API non disponibile
-  if (!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+  // Su Android: pulsante speech diventa registrazione vocale (senza trascrizione automatica)
+  // Su browser senza API: nasconde il pulsante
+  const onAndroid = _isAndroid();
+  const hasSR = _hasSpeechAPI();
+  if (!onAndroid && !hasSR) {
     document.querySelectorAll('.speech-btn').forEach(b => b.style.display = 'none');
+  } else if (onAndroid) {
+    document.querySelectorAll('.speech-btn').forEach(b => {
+      b.title = 'Registra nota vocale (tocca per iniziare/fermare)';
+    });
   }
 }
 
@@ -1098,7 +1105,18 @@ let _speechBaseText = '';
 let _speechStream   = null;
 let _speechMediaRec = null;
 let _speechChunks   = [];
-let _speechMime     = '';    // salvato subito dopo creazione recorder
+let _speechMime     = '';
+let _speechSR       = null;   // istanza SpeechRecognition corrente
+
+// Rileva Android
+function _isAndroid() {
+  return /android/i.test(navigator.userAgent);
+}
+
+// Controlla se SpeechRecognition è realmente utilizzabile (non solo presente)
+function _hasSpeechAPI() {
+  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+}
 
 function toggleSpeech(target) {
   if (_speechActive && _speechTarget === target) {
@@ -1109,9 +1127,6 @@ function toggleSpeech(target) {
 }
 
 function _startSpeech(target) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) { toast('⚠ Trascrizione non disponibile su questo browser'); return; }
-
   const btnId      = target === 'gen' ? 'speech-gen'  : `speech-${target}`;
   const textareaId = target === 'gen' ? 'note-gen'    : `note-${target}`;
 
@@ -1120,15 +1135,61 @@ function _startSpeech(target) {
   _speechBaseText = document.getElementById(textareaId)?.value || '';
   _speechChunks   = [];
   _speechMime     = '';
+  _speechSR       = null;
 
   const btn = document.getElementById(btnId);
   if (btn) btn.classList.add('listening');
 
-  // ── Avvia SpeechRecognition subito (prima di getUserMedia) ──────────────────
+  const onAndroid = _isAndroid();
+  const hasSR     = _hasSpeechAPI();
+
+  // Su Android: usa SOLO MediaRecorder (registra audio, niente trascrizione automatica)
+  // Su desktop/iOS con API disponibile: usa SpeechRecognition + MediaRecorder in parallelo
+  if (onAndroid || !hasSR) {
+    _avviaMediaRecorder(target, textareaId, btnId, onAndroid && !hasSR);
+  } else {
+    _avviaSpeechRecognition(target, textareaId, btnId);
+  }
+}
+
+function _avviaMediaRecorder(target, textareaId, btnId, mostraAvviso) {
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    .then(stream => {
+      if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
+      _speechStream = stream;
+      const mime = getSupportedMime();
+      _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      _speechMime = _speechMediaRec.mimeType;
+      _speechMediaRec.ondataavailable = e => {
+        if (e.data && e.data.size > 0) _speechChunks.push(e.data);
+      };
+      _speechMediaRec.start(500);
+      const btn = document.getElementById(btnId);
+      if (btn) btn.title = 'Tocca per fermare – audio verrà salvato';
+      toast('🎤 Registrazione in corso… tocca 🎤 per fermare', 3000);
+    })
+    .catch(err => {
+      _speechActive = false;
+      const btn = document.getElementById(btnId);
+      if (btn) btn.classList.remove('listening');
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        toast('⚠ Permesso microfono negato. Controlla le impostazioni del browser.');
+      } else {
+        toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
+      }
+    });
+}
+
+function _avviaSpeechRecognition(target, textareaId, btnId) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  let srFailed = false;
+
   function avviaRiconoscimento() {
     if (!_speechActive) return;
 
     const sr = new SpeechRecognition();
+    _speechSR = sr;
     sr.lang            = 'it-IT';
     sr.continuous      = false;
     sr.interimResults  = true;
@@ -1146,7 +1207,7 @@ function _startSpeech(target) {
     };
 
     sr.onend = () => {
-      if (_speechActive) setTimeout(avviaRiconoscimento, 200);
+      if (_speechActive && !srFailed) setTimeout(avviaRiconoscimento, 200);
     };
 
     sr.onerror = e => {
@@ -1154,8 +1215,19 @@ function _startSpeech(target) {
         if (_speechActive) setTimeout(avviaRiconoscimento, 200);
         return;
       }
-      toast('⚠ Errore trascrizione: ' + e.error);
-      _stopSpeech();
+      // Errori fatali: network (spesso su Android/file://), not-allowed, service-not-allowed
+      srFailed = true;
+      if (e.error === 'network' || e.error === 'service-not-allowed') {
+        toast('⚠ Trascrizione non disponibile (richiede HTTPS). Audio salvato come nota vocale.');
+        // Degrada gracefully: continua solo con MediaRecorder
+        _speechSR = null;
+      } else if (e.error === 'not-allowed') {
+        toast('⚠ Permesso microfono negato.');
+        _stopSpeech();
+      } else {
+        toast('⚠ Errore trascrizione: ' + e.error);
+        _stopSpeech();
+      }
     };
 
     try { sr.start(); } catch(e) { /* ignora se già avviato */ }
@@ -1163,9 +1235,7 @@ function _startSpeech(target) {
 
   avviaRiconoscimento();
 
-  // ── Avvia MediaRecorder in parallelo (indipendente) ──────────────────────
-  // Su Android potrebbe non funzionare contemporaneamente alla SpeechRecognition.
-  // In quel caso la trascrizione funziona lo stesso, semplicemente senza audio salvato.
+  // MediaRecorder in parallelo (dopo 300ms per lasciare il mic alla SpeechRecognition)
   setTimeout(() => {
     if (!_speechActive) return;
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
@@ -1178,9 +1248,8 @@ function _startSpeech(target) {
       _speechMediaRec.start(500);
     }).catch(() => {
       // Silenzioso: trascrizione continua, audio non verrà salvato
-      toast('ℹ️ Trascrizione attiva (audio non disponibile su questo dispositivo)', 3000);
     });
-  }, 300); // 300ms di delay: dà tempo alla SpeechRecognition di acquisire il mic prima
+  }, 300);
 }
 
 async function _stopSpeech() {
@@ -1188,6 +1257,12 @@ async function _stopSpeech() {
   _speechActive = false;
   const target = _speechTarget;
   _speechTarget = null;
+
+  // Ferma SpeechRecognition se attiva
+  if (_speechSR) {
+    try { _speechSR.abort(); } catch(e) { /* ignora */ }
+    _speechSR = null;
+  }
 
   // UI
   const btnId = target === 'gen' ? 'speech-gen' : `speech-${target}`;
