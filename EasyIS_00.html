@@ -123,7 +123,19 @@
     transition: transform 0.1s, box-shadow 0.1s;
   }
   .chs-btn:active { transform: scale(0.95); }
+  .chs-na { background: #f0f0f0; color: #666; }
   .chs-btn.selected { border-color: var(--text) !important; box-shadow: 0 0 0 2px var(--text); }
+
+  .speech-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--surface);
+    font-size: 13px; cursor: pointer; font-family: inherit; font-weight: 500;
+    color: var(--accent); transition: background 0.15s;
+  }
+  .speech-btn:hover { background: var(--accent-light); }
+  .speech-btn.listening { background: var(--crit-bg); border-color: var(--crit); color: var(--crit); animation: pulse 1s ease-in-out infinite; }
+  .speech-btn.unavailable { display: none; }
   .chs-5 { background: var(--good-bg); color: var(--good); }
   .chs-4 { background: var(--ok-bg); color: var(--ok); }
   .chs-3 { background: var(--att-bg); color: var(--att); }
@@ -530,16 +542,8 @@ function render(html) {
   document.getElementById("app").innerHTML = html;
 }
 
-function chsBadge(val, small=false) {
-  if (!val) return `<span style="color:var(--muted);font-size:12px">–</span>`;
-  const map = {5:['var(--good-bg)','var(--good)'],4:['var(--ok-bg)','var(--ok)'],3:['var(--att-bg)','var(--att)'],2:['var(--bad-bg)','var(--bad)'],1:['var(--crit-bg)','var(--crit)']};
-  const [bg,col] = map[val] || ['#eee','#333'];
-  const sz = small ? '22px' : '28px';
-  return `<span class="chs-display" style="background:${bg};color:${col};width:${sz};height:${sz}">${val}</span>`;
-}
-
 function chsLabel(val) {
-  const labels = {5:'Ottimo',4:'Buono',3:'Attenzione',2:'Grave',1:'Critico'};
+  const labels = {5:'Ottimo',4:'Buono',3:'Attenzione',2:'Grave',1:'Critico', NA:'Non applicabile'};
   return labels[val] || '–';
 }
 
@@ -784,6 +788,9 @@ function eliminaStazione(idx)      { _eliminaStazione(idx); }
 function esportaJSON()             { _esportaJSON().catch(e => toast("⚠ " + e.message)); }
 function esportaTutteJSON()        { _esportaTutteJSON().catch(e => toast("⚠ " + e.message)); }
 function esportaReport()           { _esportaReport().catch(e => toast("⚠ " + e.message)); }
+function setCHSGen(val)            { setCHSGenAsync(val).catch(e => toast("⚠ " + e.message)); }
+function salvaElementi()           { salvaElementiAsync().catch(e => toast("⚠ " + e.message)); }
+function viewStazione()            { viewStazioneAsync().catch(e => toast("⚠ " + e.message)); }
 
 async function _viewNuovaStazione() {
   const isp = db.ispezioni[S.ispezioneId];
@@ -811,12 +818,12 @@ function getStazione() {
   return db.ispezioni[S.ispezioneId].stazioni[S.stazioneId];
 }
 
-async function viewStazione() {
+async function viewStazioneAsync() {
   revocaBlobUrls();
   const s = getStazione();
   const nomiElementi = Object.keys(s.elementi);
 
-  // Risolvi blob URL dati generali
+  // Blob URL dati generali
   const fotoGenUrls  = await Promise.all((s.foto_gen||[]).map(id => getBlobUrl(id)));
   const audioGenUrls = await Promise.all((s.audio||[]).map(id => getBlobUrl(id)));
 
@@ -830,6 +837,10 @@ async function viewStazione() {
     url ? audioItem(url, `delAudioStazione(${i})`) : ''
   ).join("");
 
+  // CHS generale stazione
+  const chsGen = s.chs_gen ?? null;
+  const chsGenHtml = chsRow(chsGen, 'setCHSGen', null);
+
   // Elementi
   const elementiDati = await Promise.all(nomiElementi.map(async (nome, ei) => {
     const e = s.elementi[nome];
@@ -839,7 +850,6 @@ async function viewStazione() {
   }));
 
   const elemHtml = elementiDati.map(({ nome, ei, e, fotoUrls, audioUrls }) => {
-    const isAltro = nome === "Altro";
     const fotoHtml = fotoUrls.map((url, i) => url ? `
       <div class="foto-item">
         <img src="${url}" onclick="openLightbox(this.src)" loading="lazy">
@@ -850,28 +860,27 @@ async function viewStazione() {
       url ? audioItem(url, `delAudio(${ei},${i})`) : ''
     ).join("");
 
-    const chsHtml = [5,4,3,2,1].map(v =>
-      `<button class="chs-btn chs-${v}${e.chs===v?' selected':''}" onclick="setChs(${ei},${v})">${v}</button>`
-    ).join("");
-
-    const titoloElem = isAltro
-      ? `<input type="text" value="${escHtml(e.nomeAltro||'Altro')}"
-           style="font-weight:600;font-size:15px;border:none;border-bottom:1px solid var(--border);
-                  background:transparent;padding:2px 4px;width:140px;outline:none"
-           onchange="setNomeAltro(this.value)" placeholder="Nome elemento">`
-      : `<span class="elem-title">${escHtml(nome)}</span>`;
-
     return `
     <div class="card">
       <div class="elem-header">
-        ${titoloElem}
+        <span class="elem-title">${escHtml(nome)}</span>
         ${chsBadge(e.chs)}
       </div>
-      <div class="chs-row" style="margin-bottom:10px">${chsHtml}</div>
-      ${e.chs ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">← ${chsLabel(e.chs)}</div>` : ''}
+      <div class="chs-row" style="margin-bottom:10px">${chsRow(e.chs, 'setChs', ei)}</div>
+      ${e.chs && e.chs !== 'NA' ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">← ${chsLabel(e.chs)}</div>` : ''}
       <div class="form-group">
         <label class="form-label">Note</label>
-        <textarea placeholder="Osservazioni, anomalie rilevate…" onchange="setNote(${ei},this.value)">${escHtml(e.note)}</textarea>
+        <div style="position:relative">
+          <textarea id="note-${ei}" placeholder="Osservazioni, anomalie rilevate…"
+            onchange="setNote(${ei},this.value)"
+            style="padding-right:38px;width:100%">${escHtml(e.note)}</textarea>
+          <button class="speech-btn" id="speech-${ei}"
+            onclick="toggleSpeech(${ei})"
+            title="Trascrivi con microfono"
+            style="position:absolute;right:6px;top:6px;padding:4px;border-radius:50%;width:28px;height:28px;justify-content:center">
+            🎤
+          </button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <div class="file-input-wrap">
@@ -879,7 +888,7 @@ async function viewStazione() {
           <input type="file" accept="image/*" capture="environment" onchange="addFoto(event,${ei})">
         </div>
         <button class="rec-btn" id="rec-${ei}" onclick="toggleRec(${ei})">
-          <span class="rec-dot"></span> Registra
+          <span class="rec-dot"></span> Audio
         </button>
       </div>
       ${e.foto.length ? `<div class="foto-grid">${fotoHtml}</div>` : ''}
@@ -906,8 +915,23 @@ async function viewStazione() {
     <div class="section-head">Dati Generali</div>
     <div class="card" style="margin-bottom:14px">
       <div class="form-group">
+        <label class="form-label">CHS Generale stazione</label>
+        <div class="chs-row">${chsGenHtml}</div>
+        ${chsGen && chsGen !== 'NA' ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">← ${chsLabel(chsGen)}</div>` : ''}
+      </div>
+      <div class="form-group">
         <label class="form-label">Note generali stazione</label>
-        <textarea placeholder="Condizioni generali, accesso, meteo…" onchange="setNoteGen(this.value)">${escHtml(s.note_gen||'')}</textarea>
+        <div style="position:relative">
+          <textarea id="note-gen" placeholder="Condizioni generali, accesso, meteo…"
+            onchange="setNoteGen(this.value)"
+            style="padding-right:38px;width:100%">${escHtml(s.note_gen||'')}</textarea>
+          <button class="speech-btn" id="speech-gen"
+            onclick="toggleSpeech('gen')"
+            title="Trascrivi con microfono"
+            style="position:absolute;right:6px;top:6px;padding:4px;border-radius:50%;width:28px;height:28px;justify-content:center">
+            🎤
+          </button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <div class="file-input-wrap">
@@ -915,16 +939,225 @@ async function viewStazione() {
           <input type="file" accept="image/*" capture="environment" onchange="addFotoGen(event)">
         </div>
         <button class="rec-btn" id="rec-__stazione__" onclick="toggleRec(-1)">
-          <span class="rec-dot"></span> Registra
+          <span class="rec-dot"></span> Audio
         </button>
       </div>
       ${(s.foto_gen||[]).length ? `<div class="foto-grid">${fotoGenHtml}</div>` : ''}
       ${(s.audio||[]).length   ? `<div>${audioGenHtml}</div>` : ''}
     </div>
 
-    <div class="section-head">Elementi</div>
+    <div class="section-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span>Elementi</span>
+      <button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>
+    </div>
     ${elemHtml}
   `);
+
+  // Nasconde i pulsanti speech se API non disponibile
+  if (!('SpeechRecognition' in window) && !('webkitSpeechRecognition' in window)) {
+    document.querySelectorAll('.speech-btn').forEach(b => b.style.display = 'none');
+  }
+}
+
+
+// ─── CHS ROW HELPER ──────────────────────────────────────────────────────────
+// Genera la riga di bottoni CHS con deselect e NA
+// target: nome funzione da chiamare, ei: indice elemento (null per generale)
+function chsRow(currentVal, fnName, ei) {
+  const eiParam = ei !== null && ei !== undefined ? `,${ei}` : '';
+  const btns = [5,4,3,2,1].map(v => {
+    const sel = currentVal === v ? ' selected' : '';
+    return `<button class="chs-btn chs-${v}${sel}" onclick="${fnName}(${v}${eiParam})">${v}</button>`;
+  });
+  // NA button
+  const naSel = currentVal === 'NA' ? ' selected' : '';
+  btns.push(`<button class="chs-btn chs-na${naSel}" onclick="${fnName}('NA'${eiParam})">NA</button>`);
+  return btns.join('');
+}
+
+function chsBadge(val, small=false) {
+  if (!val) return `<span style="color:var(--muted);font-size:12px">–</span>`;
+  if (val === 'NA') {
+    const sz = small ? '22px' : '28px';
+    return `<span class="chs-display" style="background:#f0f0f0;color:#666;width:${sz};height:${sz}">NA</span>`;
+  }
+  const map = {5:['var(--good-bg)','var(--good)'],4:['var(--ok-bg)','var(--ok)'],3:['var(--att-bg)','var(--att)'],2:['var(--bad-bg)','var(--bad)'],1:['var(--crit-bg)','var(--crit)']};
+  const [bg,col] = map[val] || ['#eee','#333'];
+  const sz = small ? '22px' : '28px';
+  return `<span class="chs-display" style="background:${bg};color:${col};width:${sz};height:${sz}">${val}</span>`;
+}
+
+// ─── CHS GENERALE STAZIONE ────────────────────────────────────────────────────
+async function setCHSGenAsync(val) {
+  const s = getStazione();
+  // Deseleziona se stesso valore
+  s.chs_gen = s.chs_gen === val ? null : val;
+  await salvaIspezione(db.ispezioni[S.ispezioneId]);
+  viewStazione();
+}
+
+// ─── MODIFICA ELEMENTI STAZIONE ───────────────────────────────────────────────
+function viewModificaElementi() {
+  const s = getStazione();
+  const nomi = Object.keys(s.elementi);
+
+  const righe = nomi.map((nome, i) => {
+    const haDati = s.elementi[nome].chs || s.elementi[nome].note ||
+                   s.elementi[nome].foto.length || s.elementi[nome].audio.length;
+    return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <input type="text" value="${escHtml(nome)}" id="elem-name-${i}"
+        style="flex:1" placeholder="Nome elemento">
+      <button class="btn btn-danger btn-sm"
+        onclick="rimuoviElemento(${i},${haDati?'true':'false'})"
+        ${nomi.length <= 1 ? 'disabled title="Almeno un elemento obbligatorio"' : ''}>✕</button>
+    </div>`;
+  }).join('');
+
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewStazione()">← Indietro</button>
+      <h1>Modifica elementi</h1>
+    </div>
+    <div class="card">
+      <div id="elem-edit-list">${righe}</div>
+      <button class="btn btn-outline btn-block" onclick="aggiungiElemento()" style="margin-top:4px">
+        + Aggiungi elemento
+      </button>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="salvaElementi()" style="margin-top:12px">
+      ✓ Salva
+    </button>
+  `);
+}
+
+function aggiungiElemento() {
+  const list = document.getElementById('elem-edit-list');
+  const i = list.children.length;
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px';
+  div.innerHTML = `
+    <input type="text" id="elem-name-${i}" style="flex:1" placeholder="Nome elemento">
+    <button class="btn btn-danger btn-sm" onclick="this.parentElement.remove()">✕</button>`;
+  list.appendChild(div);
+}
+
+function rimuoviElemento(i, haDati) {
+  if (haDati) {
+    mostraConferma(
+      'Elimina elemento',
+      'Questo elemento ha dati inseriti. Eliminarlo cancellerà note, foto e audio associati.',
+      () => {
+        const row = document.getElementById(`elem-name-${i}`)?.closest('div');
+        if (row) row.remove();
+      }
+    );
+  } else {
+    const row = document.getElementById(`elem-name-${i}`)?.closest('div');
+    if (row) row.remove();
+  }
+}
+
+async function salvaElementiAsync() {
+  const inputs = document.querySelectorAll('[id^="elem-name-"]');
+  const nuoviNomi = [...inputs].map(inp => inp.value.trim()).filter(n => n);
+  if (!nuoviNomi.length) { toast('⚠ Inserisci almeno un elemento'); return; }
+
+  const s = getStazione();
+  const vecchiNomi = Object.keys(s.elementi);
+  const nuoviElementi = {};
+
+  for (const nome of nuoviNomi) {
+    if (vecchiNomi.includes(nome)) {
+      // Mantieni dati esistenti
+      nuoviElementi[nome] = s.elementi[nome];
+    } else {
+      // Nuovo elemento
+      nuoviElementi[nome] = { chs: null, note: '', foto: [], audio: [] };
+    }
+  }
+
+  // Elimina media degli elementi rimossi
+  for (const nome of vecchiNomi) {
+    if (!nuoviNomi.includes(nome)) {
+      const el = s.elementi[nome];
+      for (const id of [...el.foto, ...el.audio]) await idbDelete('media', id);
+    }
+  }
+
+  s.elementi = nuoviElementi;
+  await salvaIspezione(db.ispezioni[S.ispezioneId]);
+  toast('✓ Elementi aggiornati');
+  viewStazione();
+}
+
+// ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
+let _speechRec = null;
+let _speechTarget = null; // ei numerico o 'gen'
+
+function toggleSpeech(target) {
+  if (_speechRec && _speechTarget === target) {
+    _speechRec.stop();
+    return;
+  }
+  if (_speechRec) _speechRec.stop();
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { toast('⚠ Trascrizione non disponibile su questo browser'); return; }
+
+  const btnId = target === 'gen' ? 'speech-gen' : `speech-${target}`;
+  const textareaId = target === 'gen' ? 'note-gen' : `note-${target}`;
+
+  _speechRec = new SpeechRecognition();
+  _speechRec.lang = 'it-IT';
+  _speechRec.continuous = true;
+  _speechRec.interimResults = true;
+  _speechTarget = target;
+
+  let baseText = document.getElementById(textareaId)?.value || '';
+  let interim = '';
+
+  _speechRec.onresult = e => {
+    interim = '';
+    let final = '';
+    for (const result of e.results) {
+      if (result.isFinal) final += result[0].transcript + ' ';
+      else interim += result[0].transcript;
+    }
+    const ta = document.getElementById(textareaId);
+    if (ta) ta.value = baseText + final + interim;
+    if (final) baseText += final;
+  };
+
+  _speechRec.onstart = () => {
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.add('listening');
+    // Avvia anche registrazione audio per il riascolto
+    startRec(target === 'gen' ? -1 : target);
+  };
+
+  _speechRec.onend = async () => {
+    _speechRec = null;
+    _speechTarget = null;
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.remove('listening');
+    // Ferma anche la registrazione audio
+    stopRec(target === 'gen' ? -1 : target);
+    // Salva il testo finale nel campo note
+    const ta = document.getElementById(textareaId);
+    if (ta) {
+      if (target === 'gen') await setNoteGen(ta.value);
+      else await setNote(target, ta.value);
+    }
+  };
+
+  _speechRec.onerror = e => {
+    toast('⚠ Errore microfono: ' + e.error);
+    _speechRec = null; _speechTarget = null;
+    stopRec(target === 'gen' ? -1 : target);
+  };
+
+  _speechRec.start();
 }
 
 function audioItem(src, delFn) {
@@ -1017,7 +1250,9 @@ async function setNomeAltro(val) {
 }
 
 async function _setChs(ei, val) {
-  getElemento(ei).chs = val;
+  const el = getElemento(ei);
+  // Stesso valore → deseleziona
+  el.chs = el.chs === val ? null : val;
   await salvaIspezione(db.ispezioni[S.ispezioneId]);
   viewStazione();
 }
