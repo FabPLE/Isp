@@ -1092,12 +1092,13 @@ async function salvaElementiAsync() {
 }
 
 // ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
-let _speechActive = false;   // true = sessione in corso
-let _speechTarget = null;    // ei numerico o 'gen'
-let _speechBaseText = '';    // testo confermato accumulato
-let _speechStream = null;    // MediaStream per audio
-let _speechMediaRec = null;  // MediaRecorder per riascolto
-let _speechChunks = [];      // blob chunks audio
+let _speechActive   = false;
+let _speechTarget   = null;
+let _speechBaseText = '';
+let _speechStream   = null;
+let _speechMediaRec = null;
+let _speechChunks   = [];
+let _speechMime     = '';    // salvato subito dopo creazione recorder
 
 function toggleSpeech(target) {
   if (_speechActive && _speechTarget === target) {
@@ -1118,68 +1119,79 @@ function _startSpeech(target) {
   _speechTarget   = target;
   _speechBaseText = document.getElementById(textareaId)?.value || '';
   _speechChunks   = [];
+  _speechMime     = '';
 
   const btn = document.getElementById(btnId);
   if (btn) btn.classList.add('listening');
 
-  // ── Avvia MediaRecorder per il riascolto ──────────────────────────────────
-  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    _speechStream   = stream;
-    _speechMediaRec = new MediaRecorder(stream, { mimeType: getSupportedMime() });
-    _speechMediaRec.ondataavailable = e => { if (e.data.size > 0) _speechChunks.push(e.data); };
-    _speechMediaRec.start(200); // chunk ogni 200ms → nessuna interruzione automatica
-  }).catch(() => toast('⚠ Microfono non accessibile'));
+  // ── Apri microfono prima di tutto il resto ────────────────────────────────
+  navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+    _speechStream = stream;
 
-  // ── Avvia SpeechRecognition in loop ───────────────────────────────────────
-  function avviaRiconoscimento() {
-    if (!_speechActive) return; // sessione terminata, non ripartire
+    // Crea recorder e salva subito il mimeType mentre il recorder è vivo
+    const mime = getSupportedMime();
+    _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+    _speechMime = _speechMediaRec.mimeType; // salva subito
+    _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
+    _speechMediaRec.start(500); // chunk ogni 500ms
 
-    const sr = new SpeechRecognition();
-    sr.lang            = 'it-IT';
-    sr.continuous      = false;  // false = compatibile iOS Safari
-    sr.interimResults  = true;
-    sr.maxAlternatives = 1;
+    // ── Avvia SpeechRecognition in loop ──────────────────────────────────────
+    // NB: usa microfono separato (browser gestisce internamente)
+    function avviaRiconoscimento() {
+      if (!_speechActive) return;
 
-    sr.onresult = e => {
-      let final = '', interim = '';
-      for (const result of e.results) {
-        if (result.isFinal) final += result[0].transcript + ' ';
-        else interim += result[0].transcript;
-      }
-      if (final) _speechBaseText += final;
-      const ta = document.getElementById(textareaId);
-      if (ta) ta.value = _speechBaseText + interim;
-    };
+      const sr = new SpeechRecognition();
+      sr.lang            = 'it-IT';
+      sr.continuous      = false;      // false = compatibile iOS/Android
+      sr.interimResults  = true;
+      sr.maxAlternatives = 1;
 
-    sr.onend = () => {
-      // Riavvia automaticamente se la sessione è ancora attiva (fix iOS)
-      if (_speechActive) {
-        setTimeout(avviaRiconoscimento, 150);
-      }
-    };
+      sr.onresult = e => {
+        let final = '', interim = '';
+        for (const result of e.results) {
+          if (result.isFinal) final += result[0].transcript + ' ';
+          else interim += result[0].transcript;
+        }
+        if (final) _speechBaseText += final;
+        const ta = document.getElementById(textareaId);
+        if (ta) ta.value = _speechBaseText + interim;
+      };
 
-    sr.onerror = e => {
-      // 'no-speech' è normale su iOS — riavvia senza mostrare errore
-      if (e.error === 'no-speech' || e.error === 'aborted') {
-        if (_speechActive) setTimeout(avviaRiconoscimento, 150);
-        return;
-      }
-      toast('⚠ Errore trascrizione: ' + e.error);
-      _stopSpeech();
-    };
+      sr.onend = () => {
+        if (_speechActive) setTimeout(avviaRiconoscimento, 200);
+      };
 
-    sr.start();
-  }
+      sr.onerror = e => {
+        if (e.error === 'no-speech' || e.error === 'aborted') {
+          if (_speechActive) setTimeout(avviaRiconoscimento, 200);
+          return;
+        }
+        // 'not-allowed' o altri errori gravi
+        toast('⚠ Errore trascrizione: ' + e.error);
+        _stopSpeech();
+      };
 
-  avviaRiconoscimento();
+      try { sr.start(); } catch(e) { /* ignora se già avviato */ }
+    }
+
+    avviaRiconoscimento();
+
+  }).catch(err => {
+    _speechActive = false;
+    _speechTarget = null;
+    const btn2 = document.getElementById(btnId);
+    if (btn2) btn2.classList.remove('listening');
+    toast('⚠ Microfono non accessibile: ' + (err.message || err));
+  });
 }
 
 async function _stopSpeech() {
+  if (!_speechActive) return;
   _speechActive = false;
   const target = _speechTarget;
   _speechTarget = null;
 
-  // Aggiorna UI
+  // UI
   const btnId = target === 'gen' ? 'speech-gen' : `speech-${target}`;
   const btn   = document.getElementById(btnId);
   if (btn) btn.classList.remove('listening');
@@ -1187,31 +1199,45 @@ async function _stopSpeech() {
   // Salva testo note
   const textareaId = target === 'gen' ? 'note-gen' : `note-${target}`;
   const ta = document.getElementById(textareaId);
-  if (ta) {
-    if (target === 'gen') await setNoteGen(ta.value);
-    else                  await setNote(target, ta.value);
+  const testoFinale = ta ? ta.value : _speechBaseText;
+  if (target === 'gen') await setNoteGen(testoFinale);
+  else                  await setNote(target, testoFinale);
+
+  // Ferma stream microfono e salva audio
+  if (_speechMediaRec && _speechMediaRec.state !== 'inactive') {
+    const mime   = _speechMime; // già salvato — non dipende dal recorder
+    const chunks = _speechChunks;
+    const stream = _speechStream;
+
+    await new Promise(resolve => {
+      _speechMediaRec.onstop = async () => {
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        if (chunks.length) {
+          try {
+            const blob = new Blob(chunks, { type: mime || 'audio/webm' });
+            const isp  = db.ispezioni[S.ispezioneId];
+            const id   = await salvaMedia(isp.id, blob, 'audio');
+            if (target === 'gen') getStazione().audio.push(id);
+            else                  getElemento(target).audio.push(id);
+            await salvaIspezione(isp);
+          } catch(e) { console.error('Salvataggio audio speech:', e); }
+        }
+        resolve();
+      };
+      _speechMediaRec.stop();
+    });
+
+    _speechMediaRec = null;
+    _speechStream   = null;
+    _speechChunks   = [];
+    _speechMime     = '';
+  } else {
+    // Recorder non partito (es. getUserMedia fallito)
+    if (_speechStream) _speechStream.getTracks().forEach(t => t.stop());
+    _speechStream = null;
   }
 
-  // Ferma MediaRecorder e salva il blob audio
-  if (_speechMediaRec && _speechMediaRec.state !== 'inactive') {
-    _speechMediaRec.onstop = async () => {
-      if (_speechStream) _speechStream.getTracks().forEach(t => t.stop());
-      if (_speechChunks.length) {
-        const blob = new Blob(_speechChunks, { type: _speechMediaRec.mimeType });
-        const isp  = db.ispezioni[S.ispezioneId];
-        const id   = await salvaMedia(isp.id, blob, 'audio');
-        const recTarget = target === 'gen' ? -1 : target;
-        if (recTarget === -1) getStazione().audio.push(id);
-        else                  getElemento(recTarget).audio.push(id);
-        await salvaIspezione(isp);
-        viewStazione();
-      }
-      _speechMediaRec = null;
-      _speechStream   = null;
-      _speechChunks   = [];
-    };
-    _speechMediaRec.stop();
-  }
+  viewStazione();
 }
 
 function audioItem(src, delFn) {
