@@ -1124,65 +1124,63 @@ function _startSpeech(target) {
   const btn = document.getElementById(btnId);
   if (btn) btn.classList.add('listening');
 
-  // ── Apri microfono prima di tutto il resto ────────────────────────────────
-  navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
-    _speechStream = stream;
+  // ── Avvia SpeechRecognition subito (prima di getUserMedia) ──────────────────
+  function avviaRiconoscimento() {
+    if (!_speechActive) return;
 
-    // Crea recorder e salva subito il mimeType mentre il recorder è vivo
-    const mime = getSupportedMime();
-    _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-    _speechMime = _speechMediaRec.mimeType; // salva subito
-    _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
-    _speechMediaRec.start(500); // chunk ogni 500ms
+    const sr = new SpeechRecognition();
+    sr.lang            = 'it-IT';
+    sr.continuous      = false;
+    sr.interimResults  = true;
+    sr.maxAlternatives = 1;
 
-    // ── Avvia SpeechRecognition in loop ──────────────────────────────────────
-    // NB: usa microfono separato (browser gestisce internamente)
-    function avviaRiconoscimento() {
-      if (!_speechActive) return;
+    sr.onresult = e => {
+      let final = '', interim = '';
+      for (const result of e.results) {
+        if (result.isFinal) final += result[0].transcript + ' ';
+        else interim += result[0].transcript;
+      }
+      if (final) _speechBaseText += final;
+      const ta = document.getElementById(textareaId);
+      if (ta) ta.value = _speechBaseText + interim;
+    };
 
-      const sr = new SpeechRecognition();
-      sr.lang            = 'it-IT';
-      sr.continuous      = false;      // false = compatibile iOS/Android
-      sr.interimResults  = true;
-      sr.maxAlternatives = 1;
+    sr.onend = () => {
+      if (_speechActive) setTimeout(avviaRiconoscimento, 200);
+    };
 
-      sr.onresult = e => {
-        let final = '', interim = '';
-        for (const result of e.results) {
-          if (result.isFinal) final += result[0].transcript + ' ';
-          else interim += result[0].transcript;
-        }
-        if (final) _speechBaseText += final;
-        const ta = document.getElementById(textareaId);
-        if (ta) ta.value = _speechBaseText + interim;
-      };
-
-      sr.onend = () => {
+    sr.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') {
         if (_speechActive) setTimeout(avviaRiconoscimento, 200);
-      };
+        return;
+      }
+      toast('⚠ Errore trascrizione: ' + e.error);
+      _stopSpeech();
+    };
 
-      sr.onerror = e => {
-        if (e.error === 'no-speech' || e.error === 'aborted') {
-          if (_speechActive) setTimeout(avviaRiconoscimento, 200);
-          return;
-        }
-        // 'not-allowed' o altri errori gravi
-        toast('⚠ Errore trascrizione: ' + e.error);
-        _stopSpeech();
-      };
+    try { sr.start(); } catch(e) { /* ignora se già avviato */ }
+  }
 
-      try { sr.start(); } catch(e) { /* ignora se già avviato */ }
-    }
+  avviaRiconoscimento();
 
-    avviaRiconoscimento();
-
-  }).catch(err => {
-    _speechActive = false;
-    _speechTarget = null;
-    const btn2 = document.getElementById(btnId);
-    if (btn2) btn2.classList.remove('listening');
-    toast('⚠ Microfono non accessibile: ' + (err.message || err));
-  });
+  // ── Avvia MediaRecorder in parallelo (indipendente) ──────────────────────
+  // Su Android potrebbe non funzionare contemporaneamente alla SpeechRecognition.
+  // In quel caso la trascrizione funziona lo stesso, semplicemente senza audio salvato.
+  setTimeout(() => {
+    if (!_speechActive) return;
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+      if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
+      _speechStream = stream;
+      const mime = getSupportedMime();
+      _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+      _speechMime = _speechMediaRec.mimeType;
+      _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
+      _speechMediaRec.start(500);
+    }).catch(() => {
+      // Silenzioso: trascrizione continua, audio non verrà salvato
+      toast('ℹ️ Trascrizione attiva (audio non disponibile su questo dispositivo)', 3000);
+    });
+  }, 300); // 300ms di delay: dà tempo alla SpeechRecognition di acquisire il mic prima
 }
 
 async function _stopSpeech() {
