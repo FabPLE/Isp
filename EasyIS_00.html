@@ -953,16 +953,11 @@ async function viewStazioneAsync() {
     ${elemHtml}
   `);
 
-  // Su Android: pulsante speech diventa registrazione vocale (senza trascrizione automatica)
-  // Su browser senza API: nasconde il pulsante
-  const onAndroid = _isAndroid();
-  const hasSR = _hasSpeechAPI();
-  if (!onAndroid && !hasSR) {
+  // Nasconde i pulsanti speech solo se il browser non supporta né SpeechRecognition né MediaRecorder
+  const hasSpeechAPI = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const hasMediaRec  = !!window.MediaRecorder;
+  if (!hasSpeechAPI && !hasMediaRec) {
     document.querySelectorAll('.speech-btn').forEach(b => b.style.display = 'none');
-  } else if (onAndroid) {
-    document.querySelectorAll('.speech-btn').forEach(b => {
-      b.title = 'Registra nota vocale (tocca per iniziare/fermare)';
-    });
   }
 }
 
@@ -1099,24 +1094,19 @@ async function salvaElementiAsync() {
 }
 
 // ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
+// Strategia: un solo getUserMedia → stream condiviso tra SpeechRecognition e MediaRecorder.
+// Questo elimina il conflitto sul microfono che blocca Android.
+// Se SpeechRecognition non è disponibile o fallisce → solo registrazione audio.
+
 let _speechActive   = false;
 let _speechTarget   = null;
 let _speechBaseText = '';
-let _speechStream   = null;
-let _speechMediaRec = null;
+let _speechStream   = null;   // MediaStream da getUserMedia
+let _speechMediaRec = null;   // MediaRecorder collegato allo stesso stream
 let _speechChunks   = [];
 let _speechMime     = '';
 let _speechSR       = null;   // istanza SpeechRecognition corrente
-
-// Rileva Android
-function _isAndroid() {
-  return /android/i.test(navigator.userAgent);
-}
-
-// Controlla se SpeechRecognition è realmente utilizzabile (non solo presente)
-function _hasSpeechAPI() {
-  return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-}
+let _speechSRLoop   = false;  // flag per il re-start automatico
 
 function toggleSpeech(target) {
   if (_speechActive && _speechTarget === target) {
@@ -1126,7 +1116,7 @@ function toggleSpeech(target) {
   }
 }
 
-function _startSpeech(target) {
+async function _startSpeech(target) {
   const btnId      = target === 'gen' ? 'speech-gen'  : `speech-${target}`;
   const textareaId = target === 'gen' ? 'note-gen'    : `note-${target}`;
 
@@ -1136,62 +1126,56 @@ function _startSpeech(target) {
   _speechChunks   = [];
   _speechMime     = '';
   _speechSR       = null;
+  _speechSRLoop   = true;
 
   const btn = document.getElementById(btnId);
   if (btn) btn.classList.add('listening');
 
-  const onAndroid = _isAndroid();
-  const hasSR     = _hasSpeechAPI();
-
-  // Su Android: usa SOLO MediaRecorder (registra audio, niente trascrizione automatica)
-  // Su desktop/iOS con API disponibile: usa SpeechRecognition + MediaRecorder in parallelo
-  if (onAndroid || !hasSR) {
-    _avviaMediaRecorder(target, textareaId, btnId, onAndroid && !hasSR);
-  } else {
-    _avviaSpeechRecognition(target, textareaId, btnId);
+  // 1. Apri il microfono UNA sola volta
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch(err) {
+    _speechActive = false;
+    _speechSRLoop = false;
+    if (btn) btn.classList.remove('listening');
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      toast('⚠ Permesso microfono negato. Controlla le impostazioni del browser.');
+    } else {
+      toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
+    }
+    return;
   }
-}
 
-function _avviaMediaRecorder(target, textareaId, btnId, mostraAvviso) {
-  navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    .then(stream => {
-      if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
-      _speechStream = stream;
-      const mime = getSupportedMime();
-      _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-      _speechMime = _speechMediaRec.mimeType;
-      _speechMediaRec.ondataavailable = e => {
-        if (e.data && e.data.size > 0) _speechChunks.push(e.data);
-      };
-      _speechMediaRec.start(500);
-      const btn = document.getElementById(btnId);
-      if (btn) btn.title = 'Tocca per fermare – audio verrà salvato';
-      toast('🎤 Registrazione in corso… tocca 🎤 per fermare', 3000);
-    })
-    .catch(err => {
-      _speechActive = false;
-      const btn = document.getElementById(btnId);
-      if (btn) btn.classList.remove('listening');
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        toast('⚠ Permesso microfono negato. Controlla le impostazioni del browser.');
-      } else {
-        toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
-      }
-    });
-}
+  if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
+  _speechStream = stream;
 
-function _avviaSpeechRecognition(target, textareaId, btnId) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // 2. Avvia MediaRecorder sullo stesso stream (registrazione audio)
+  const mime = getSupportedMime();
+  try {
+    _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+    _speechMime = _speechMediaRec.mimeType;
+    _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
+    _speechMediaRec.start(500);
+  } catch(e) {
+    console.warn('MediaRecorder non avviato:', e);
+  }
 
-  let srFailed = false;
+  // 3. Avvia SpeechRecognition (usa il suo canale interno, non getUserMedia)
+  //    Su Chrome/Android con HTTPS funziona in parallelo al MediaRecorder
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    toast('ℹ️ Trascrizione non supportata da questo browser. Audio registrato come nota vocale.', 4000);
+    return; // MediaRecorder è già attivo, registra comunque
+  }
 
-  function avviaRiconoscimento() {
-    if (!_speechActive) return;
+  function _avviaLoop() {
+    if (!_speechActive || !_speechSRLoop) return;
 
-    const sr = new SpeechRecognition();
+    const sr = new SR();
     _speechSR = sr;
     sr.lang            = 'it-IT';
-    sr.continuous      = false;
+    sr.continuous      = false;  // false = più stabile su Android
     sr.interimResults  = true;
     sr.maxAlternatives = 1;
 
@@ -1207,58 +1191,46 @@ function _avviaSpeechRecognition(target, textareaId, btnId) {
     };
 
     sr.onend = () => {
-      if (_speechActive && !srFailed) setTimeout(avviaRiconoscimento, 200);
+      // Riavvia automaticamente finché l'utente non ferma
+      if (_speechActive && _speechSRLoop) {
+        setTimeout(_avviaLoop, 150);
+      }
     };
 
     sr.onerror = e => {
       if (e.error === 'no-speech' || e.error === 'aborted') {
-        if (_speechActive) setTimeout(avviaRiconoscimento, 200);
+        // Non fatale: riavvia
+        if (_speechActive && _speechSRLoop) setTimeout(_avviaLoop, 150);
         return;
       }
-      // Errori fatali: network (spesso su Android/file://), not-allowed, service-not-allowed
-      srFailed = true;
-      if (e.error === 'network' || e.error === 'service-not-allowed') {
-        toast('⚠ Trascrizione non disponibile (richiede HTTPS). Audio salvato come nota vocale.');
-        // Degrada gracefully: continua solo con MediaRecorder
-        _speechSR = null;
-      } else if (e.error === 'not-allowed') {
-        toast('⚠ Permesso microfono negato.');
-        _stopSpeech();
+      // Errori fatali
+      _speechSRLoop = false;
+      _speechSR = null;
+      if (e.error === 'not-allowed') {
+        toast('⚠ Permesso microfono negato alla trascrizione.');
+      } else if (e.error === 'network') {
+        toast('⚠ Trascrizione non disponibile (errore di rete). Audio registrato.');
       } else {
-        toast('⚠ Errore trascrizione: ' + e.error);
-        _stopSpeech();
+        toast('⚠ Errore trascrizione (' + e.error + '). Audio registrato.');
       }
+      // MediaRecorder continua → l'audio viene salvato ugualmente
     };
 
-    try { sr.start(); } catch(e) { /* ignora se già avviato */ }
+    try { sr.start(); }
+    catch(ex) { /* già avviato, ignora */ }
   }
 
-  avviaRiconoscimento();
-
-  // MediaRecorder in parallelo (dopo 300ms per lasciare il mic alla SpeechRecognition)
-  setTimeout(() => {
-    if (!_speechActive) return;
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
-      if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
-      _speechStream = stream;
-      const mime = getSupportedMime();
-      _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-      _speechMime = _speechMediaRec.mimeType;
-      _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
-      _speechMediaRec.start(500);
-    }).catch(() => {
-      // Silenzioso: trascrizione continua, audio non verrà salvato
-    });
-  }, 300);
+  _avviaLoop();
 }
 
 async function _stopSpeech() {
   if (!_speechActive) return;
   _speechActive = false;
+  _speechSRLoop = false;
   const target = _speechTarget;
   _speechTarget = null;
 
-  // Ferma SpeechRecognition se attiva
+  // Ferma SpeechRecognition
   if (_speechSR) {
     try { _speechSR.abort(); } catch(e) { /* ignora */ }
     _speechSR = null;
