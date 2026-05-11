@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0d0d0d">
+<title>Note Vocali</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --surface2: #1e1e1e;
+    --border: #2a2a2a;
+    --accent: #c8ff00;
+    --accent2: #ff6b35;
+    --text: #f0f0f0;
+    --muted: #5a5a5a;
+    --danger: #ff3b3b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* HEADER */
+  header {
+    padding: 20px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.5px;
+    line-height: 1;
+  }
+
+  .logo span { color: var(--accent); }
+
+  .status-pill {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface2);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    transition: all 0.3s;
+  }
+
+  .status-pill.recording {
+    background: rgba(255, 59, 59, 0.15);
+    color: var(--danger);
+    border-color: var(--danger);
+    animation: pulse-border 1.2s infinite;
+  }
+
+  .status-pill.listening {
+    background: rgba(200, 255, 0, 0.1);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* MAIN */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 14px;
+  }
+
+  /* TEXTAREA */
+  .note-wrapper {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .note-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  #noteArea {
+    flex: 1;
+    min-height: 280px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    resize: none;
+    outline: none;
+    transition: border-color 0.3s;
+    -webkit-appearance: none;
+  }
+
+  #noteArea:focus {
+    border-color: #3a3a3a;
+  }
+
+  #noteArea.active-transcription {
+    border-color: var(--accent);
+  }
+
+  #noteArea::placeholder { color: var(--muted); }
+
+  /* Live transcription badge */
+  .live-badge {
+    position: absolute;
+    top: 32px;
+    right: 12px;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+
+  .live-badge.visible { opacity: 1; }
+
+  /* INTERIM TEXT */
+  #interimText {
+    font-size: 13px;
+    color: var(--muted);
+    font-style: italic;
+    min-height: 20px;
+    padding: 0 4px;
+    transition: all 0.2s;
+    font-family: 'DM Mono', monospace;
+  }
+
+  /* WAVEFORM */
+  .waveform-container {
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0 8px;
+    overflow: hidden;
+  }
+
+  .wave-bar {
+    width: 3px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    transition: height 0.1s ease, background 0.3s;
+  }
+
+  .waveform-container.active .wave-bar {
+    background: var(--accent);
+    animation: wave-anim 0.8s ease-in-out infinite;
+  }
+
+  .waveform-container.recording-active .wave-bar {
+    background: var(--danger);
+    animation: wave-anim 0.8s ease-in-out infinite;
+  }
+
+  @keyframes wave-anim {
+    0%, 100% { height: 4px; }
+    50% { height: 28px; }
+  }
+
+  .wave-bar:nth-child(1)  { animation-delay: 0.0s; }
+  .wave-bar:nth-child(2)  { animation-delay: 0.07s; }
+  .wave-bar:nth-child(3)  { animation-delay: 0.14s; }
+  .wave-bar:nth-child(4)  { animation-delay: 0.21s; }
+  .wave-bar:nth-child(5)  { animation-delay: 0.28s; }
+  .wave-bar:nth-child(6)  { animation-delay: 0.35s; }
+  .wave-bar:nth-child(7)  { animation-delay: 0.28s; }
+  .wave-bar:nth-child(8)  { animation-delay: 0.21s; }
+  .wave-bar:nth-child(9)  { animation-delay: 0.14s; }
+  .wave-bar:nth-child(10) { animation-delay: 0.07s; }
+  .wave-bar:nth-child(11) { animation-delay: 0.0s; }
+
+  /* CONTROLS */
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    -webkit-appearance: none;
+    touch-action: manipulation;
+  }
+
+  .btn:active { transform: scale(0.97); }
+
+  .btn-icon { font-size: 18px; line-height: 1; }
+
+  .btn-transcribe {
+    border-color: rgba(200, 255, 0, 0.3);
+    background: rgba(200, 255, 0, 0.05);
+    color: var(--accent);
+  }
+
+  .btn-transcribe.active {
+    background: rgba(200, 255, 0, 0.12);
+    border-color: var(--accent);
+  }
+
+  .btn-record {
+    border-color: rgba(255, 59, 59, 0.3);
+    background: rgba(255, 59, 59, 0.05);
+    color: var(--danger);
+  }
+
+  .btn-record.active {
+    background: rgba(255, 59, 59, 0.12);
+    border-color: var(--danger);
+  }
+
+  .btn-clear {
+    border-color: var(--border);
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .btn-copy {
+    border-color: rgba(255, 107, 53, 0.3);
+    background: rgba(255, 107, 53, 0.05);
+    color: var(--accent2);
+  }
+
+  /* RECORDINGS */
+  .recordings-section {
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .recordings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .recording-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slide-in 0.3s ease;
+  }
+
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .recording-item audio {
+    flex: 1;
+    height: 32px;
+    min-width: 0;
+    border-radius: 6px;
+  }
+
+  .rec-meta {
+    font-size: 10px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .btn-dl {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 14px;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: border-color 0.2s;
+  }
+
+  .btn-dl:active { border-color: var(--accent); }
+
+  .empty-state {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 12px;
+  }
+
+  /* TOAST */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    padding: 10px 20px;
+    border-radius: 20px;
+    white-space: nowrap;
+    transition: transform 0.3s ease;
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  #toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">NOTE<span>●</span>VOX</div>
+  <div class="status-pill" id="statusPill">PRONTO</div>
+</header>
+
+<main>
+  <div class="note-wrapper">
+    <div class="note-label">// note</div>
+    <div class="live-badge" id="liveBadge">⬤ live</div>
+    <textarea id="noteArea" placeholder="Scrivi o usa il microfono per dettare..."></textarea>
+  </div>
+
+  <div id="interimText"></div>
+
+  <div class="waveform-container" id="waveform">
+    <div class="wave-bar"></div><div class="wave-bar"></div>
+    <div class="wave-bar"></div><div class="wave-bar"></div>
+    <div class="wave-bar"></div><div class="wave-bar"></div>
+    <div class="wave-bar"></div><div class="wave-bar"></div>
+    <div class="wave-bar"></div><div class="wave-bar"></div>
+    <div class="wave-bar"></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-transcribe" id="btnTranscribe" onclick="toggleTranscription()">
+      <span class="btn-icon">🎙</span> Trascrivi
+    </button>
+    <button class="btn btn-record" id="btnRecord" onclick="toggleRecording()">
+      <span class="btn-icon">⏺</span> Registra
+    </button>
+    <button class="btn btn-clear" onclick="clearNote()">
+      <span class="btn-icon">✕</span> Cancella
+    </button>
+    <button class="btn btn-copy" onclick="copyNote()">
+      <span class="btn-icon">⎘</span> Copia
+    </button>
+  </div>
+
+  <div class="recordings-section">
+    <div class="section-header">
+      <span class="section-label">// registrazioni</span>
+      <span class="section-label" id="recCount">0 file</span>
+    </div>
+    <div class="recordings-list" id="recordingsList">
+      <div class="empty-state">Nessuna registrazione ancora</div>
+    </div>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+  // ─── STATE ───────────────────────────────────────────────
+  let recognition = null;
+  let isTranscribing = false;
+  let mediaRecorder = null;
+  let isRecording = false;
+  let audioChunks = [];
+  let recIndex = 0;
+
+  // ─── TOAST ───────────────────────────────────────────────
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // ─── STATUS ──────────────────────────────────────────────
+  function setStatus(text, cls) {
+    const p = document.getElementById('statusPill');
+    p.textContent = text;
+    p.className = 'status-pill' + (cls ? ' ' + cls : '');
+  }
+
+  // ─── WAVEFORM ────────────────────────────────────────────
+  function setWaveform(mode) {
+    const w = document.getElementById('waveform');
+    w.className = 'waveform-container';
+    if (mode) w.classList.add(mode);
+  }
+
+  // ─── SPEECH RECOGNITION ──────────────────────────────────
+  function toggleTranscription() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      showToast('⚠ Speech API non supportata su questo browser');
+      return;
+    }
+
+    if (isTranscribing) {
+      stopTranscription();
+    } else {
+      startTranscription();
+    }
+  }
+
+  function startTranscription() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.lang = 'it-IT';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      isTranscribing = true;
+      document.getElementById('btnTranscribe').classList.add('active');
+      document.getElementById('btnTranscribe').querySelector('.btn-icon').textContent = '⏹';
+      document.getElementById('noteArea').classList.add('active-transcription');
+      document.getElementById('liveBadge').classList.add('visible');
+      setStatus('ASCOLTO', 'listening');
+      setWaveform('active');
+    };
+
+    recognition.onresult = (e) => {
+      let interim = '';
+      let finalChunk = '';
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          finalChunk += t + ' ';
+        } else {
+          interim += t;
+        }
+      }
+
+      if (finalChunk) {
+        const area = document.getElementById('noteArea');
+        area.value += finalChunk;
+        area.scrollTop = area.scrollHeight;
+      }
+
+      document.getElementById('interimText').textContent = interim ? '→ ' + interim : '';
+    };
+
+    recognition.onerror = (e) => {
+      if (e.error !== 'aborted') showToast('Errore mic: ' + e.error);
+      stopTranscription();
+    };
+
+    recognition.onend = () => {
+      if (isTranscribing) recognition.start(); // keep alive
+    };
+
+    recognition.start();
+  }
+
+  function stopTranscription() {
+    isTranscribing = false;
+    if (recognition) { recognition.onend = null; recognition.stop(); recognition = null; }
+    document.getElementById('btnTranscribe').classList.remove('active');
+    document.getElementById('btnTranscribe').querySelector('.btn-icon').textContent = '🎙';
+    document.getElementById('noteArea').classList.remove('active-transcription');
+    document.getElementById('liveBadge').classList.remove('visible');
+    document.getElementById('interimText').textContent = '';
+    if (!isRecording) { setStatus('PRONTO'); setWaveform(''); }
+  }
+
+  // ─── AUDIO RECORDING ─────────────────────────────────────
+  function toggleRecording() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Prefer webm/opus on Android Chrome, fallback to mp4
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType });
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunks, { type: mimeType });
+        addRecording(blob, mimeType);
+        stream.getTracks().forEach(t => t.stop());
+      };
+
+      mediaRecorder.start(250);
+      isRecording = true;
+      document.getElementById('btnRecord').classList.add('active');
+      document.getElementById('btnRecord').querySelector('.btn-icon').textContent = '⏹';
+      setStatus('REC ●', 'recording');
+      setWaveform('recording-active');
+      showToast('⏺ Registrazione avviata');
+    } catch (err) {
+      showToast('⚠ Permesso microfono negato');
+      console.error(err);
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+    isRecording = false;
+    document.getElementById('btnRecord').classList.remove('active');
+    document.getElementById('btnRecord').querySelector('.btn-icon').textContent = '⏺';
+    if (!isTranscribing) { setStatus('PRONTO'); setWaveform(''); }
+    showToast('✓ Registrazione salvata');
+  }
+
+  // ─── ADD RECORDING TO LIST ───────────────────────────────
+  function addRecording(blob, mimeType) {
+    recIndex++;
+    const url = URL.createObjectURL(blob);
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const now = new Date();
+    const timeStr = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+    const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+
+    const list = document.getElementById('recordingsList');
+    // Remove empty state
+    const empty = list.querySelector('.empty-state');
+    if (empty) empty.remove();
+
+    const item = document.createElement('div');
+    item.className = 'recording-item';
+    item.innerHTML = `
+      <span class="rec-meta">#${recIndex}<br>${timeStr}<br>${sizeMB}mb</span>
+      <audio controls src="${url}"></audio>
+      <a href="${url}" download="nota_${recIndex}.${ext}" class="btn-dl" title="Scarica">⬇</a>
+    `;
+    list.prepend(item);
+
+    document.getElementById('recCount').textContent = recIndex + (recIndex === 1 ? ' file' : ' file');
+  }
+
+  // ─── UTILS ───────────────────────────────────────────────
+  function clearNote() {
+    if (confirm('Cancellare il testo delle note?')) {
+      document.getElementById('noteArea').value = '';
+      document.getElementById('interimText').textContent = '';
+      showToast('✓ Note cancellate');
+    }
+  }
+
+  function copyNote() {
+    const text = document.getElementById('noteArea').value;
+    if (!text.trim()) { showToast('Nessun testo da copiare'); return; }
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('✓ Copiato negli appunti');
+    }).catch(() => {
+      // fallback for older Android
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('✓ Copiato negli appunti');
+    });
+  }
+</script>
+</body>
+</html>
