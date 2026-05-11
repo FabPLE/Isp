@@ -953,12 +953,7 @@ async function viewStazioneAsync() {
     ${elemHtml}
   `);
 
-  // Nasconde i pulsanti speech solo se il browser non supporta né SpeechRecognition né MediaRecorder
-  const hasSpeechAPI = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  const hasMediaRec  = !!window.MediaRecorder;
-  if (!hasSpeechAPI && !hasMediaRec) {
-    document.querySelectorAll('.speech-btn').forEach(b => b.style.display = 'none');
-  }
+  // I pulsanti 🎤 usano Whisper offline, disponibile su tutti i browser moderni
 }
 
 
@@ -1093,20 +1088,62 @@ async function salvaElementiAsync() {
   viewStazione();
 }
 
-// ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
-// Strategia: un solo getUserMedia → stream condiviso tra SpeechRecognition e MediaRecorder.
-// Questo elimina il conflitto sul microfono che blocca Android.
-// Se SpeechRecognition non è disponibile o fallisce → solo registrazione audio.
+// ─── WHISPER OFFLINE (trascrizione) ──────────────────────────────────────────
+// Usa @xenova/transformers (Whisper tiny multilingual) via CDN.
+// Il modello (~40MB) viene scaricato una volta e messo in cache dal browser.
+// Funziona OFFLINE dopo il primo download. Nessun server necessario.
 
+let _whisperPipe    = null;   // pipeline Whisper (caricata al primo uso)
+let _whisperLoading = false;
+
+async function _getWhisper() {
+  if (_whisperPipe) return _whisperPipe;
+  if (_whisperLoading) {
+    // Aspetta che finisca il caricamento già avviato
+    while (_whisperLoading) await new Promise(r => setTimeout(r, 200));
+    return _whisperPipe;
+  }
+  _whisperLoading = true;
+  try {
+    toast('⏳ Caricamento modello Whisper… (solo la prima volta, ~40MB)', 8000);
+    const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+    _whisperPipe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+      quantized: true,
+      progress_callback: p => {
+        if (p.status === 'downloading') {
+          const pct = p.total ? Math.round(p.loaded / p.total * 100) : '…';
+          toast(`⏳ Download modello: ${pct}%`, 3000);
+        }
+      }
+    });
+    toast('✓ Modello pronto', 2000);
+  } catch(e) {
+    _whisperLoading = false;
+    throw e;
+  }
+  _whisperLoading = false;
+  return _whisperPipe;
+}
+
+async function _trascriviBlob(audioBlob) {
+  const pipe = await _getWhisper();
+  // Converti blob in ArrayBuffer → Float32Array (PCM mono 16kHz richiesto da Whisper)
+  const arrayBuf = await audioBlob.arrayBuffer();
+  const audioBuf = await new AudioContext({ sampleRate: 16000 }).decodeAudioData(arrayBuf);
+  const float32  = audioBuf.getChannelData(0);
+  const result   = await pipe(float32, { language: 'italian', task: 'transcribe' });
+  return (result.text || '').trim();
+}
+
+// ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
+// Flusso: premi 🎤 → registra audio (rosso) → premi di nuovo → Whisper trascrive → testo nelle note + audio salvato
 let _speechActive   = false;
 let _speechTarget   = null;
 let _speechBaseText = '';
-let _speechStream   = null;   // MediaStream da getUserMedia
-let _speechMediaRec = null;   // MediaRecorder collegato allo stesso stream
+let _speechStream   = null;
+let _speechMediaRec = null;
 let _speechChunks   = [];
 let _speechMime     = '';
-let _speechSR       = null;   // istanza SpeechRecognition corrente
-let _speechSRLoop   = false;  // flag per il re-start automatico
 
 function toggleSpeech(target) {
   if (_speechActive && _speechTarget === target) {
@@ -1120,168 +1157,85 @@ async function _startSpeech(target) {
   const btnId      = target === 'gen' ? 'speech-gen'  : `speech-${target}`;
   const textareaId = target === 'gen' ? 'note-gen'    : `note-${target}`;
 
+  // Avvia precaricamento modello in background (non blocca)
+  _getWhisper().catch(() => {});
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch(err) {
+    if (err.name === 'NotAllowedError') toast('⚠ Permesso microfono negato. Controlla le impostazioni.');
+    else toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
+    return;
+  }
+
   _speechActive   = true;
   _speechTarget   = target;
   _speechBaseText = document.getElementById(textareaId)?.value || '';
   _speechChunks   = [];
   _speechMime     = '';
-  _speechSR       = null;
-  _speechSRLoop   = true;
+  _speechStream   = stream;
 
   const btn = document.getElementById(btnId);
-  if (btn) btn.classList.add('listening');
+  if (btn) { btn.classList.add('listening'); btn.title = 'Tocca per fermare e trascrivere'; }
 
-  // 1. Apri il microfono UNA sola volta
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch(err) {
-    _speechActive = false;
-    _speechSRLoop = false;
-    if (btn) btn.classList.remove('listening');
-    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      toast('⚠ Permesso microfono negato. Controlla le impostazioni del browser.');
-    } else {
-      toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
-    }
-    return;
-  }
-
-  if (!_speechActive) { stream.getTracks().forEach(t => t.stop()); return; }
-  _speechStream = stream;
-
-  // 2. Avvia MediaRecorder sullo stesso stream (registrazione audio)
   const mime = getSupportedMime();
-  try {
-    _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-    _speechMime = _speechMediaRec.mimeType;
-    _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
-    _speechMediaRec.start(500);
-  } catch(e) {
-    console.warn('MediaRecorder non avviato:', e);
-  }
-
-  // 3. Avvia SpeechRecognition (usa il suo canale interno, non getUserMedia)
-  //    Su Chrome/Android con HTTPS funziona in parallelo al MediaRecorder
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    toast('ℹ️ Trascrizione non supportata da questo browser. Audio registrato come nota vocale.', 4000);
-    return; // MediaRecorder è già attivo, registra comunque
-  }
-
-  function _avviaLoop() {
-    if (!_speechActive || !_speechSRLoop) return;
-
-    const sr = new SR();
-    _speechSR = sr;
-    sr.lang            = 'it-IT';
-    sr.continuous      = false;  // false = più stabile su Android
-    sr.interimResults  = true;
-    sr.maxAlternatives = 1;
-
-    sr.onresult = e => {
-      let final = '', interim = '';
-      for (const result of e.results) {
-        if (result.isFinal) final += result[0].transcript + ' ';
-        else interim += result[0].transcript;
-      }
-      if (final) _speechBaseText += final;
-      const ta = document.getElementById(textareaId);
-      if (ta) ta.value = _speechBaseText + interim;
-    };
-
-    sr.onend = () => {
-      // Riavvia automaticamente finché l'utente non ferma
-      if (_speechActive && _speechSRLoop) {
-        setTimeout(_avviaLoop, 150);
-      }
-    };
-
-    sr.onerror = e => {
-      if (e.error === 'no-speech' || e.error === 'aborted') {
-        // Non fatale: riavvia
-        if (_speechActive && _speechSRLoop) setTimeout(_avviaLoop, 150);
-        return;
-      }
-      // Errori fatali
-      _speechSRLoop = false;
-      _speechSR = null;
-      if (e.error === 'not-allowed') {
-        toast('⚠ Permesso microfono negato alla trascrizione.');
-      } else if (e.error === 'network') {
-        toast('⚠ Trascrizione non disponibile (errore di rete). Audio registrato.');
-      } else {
-        toast('⚠ Errore trascrizione (' + e.error + '). Audio registrato.');
-      }
-      // MediaRecorder continua → l'audio viene salvato ugualmente
-    };
-
-    try { sr.start(); }
-    catch(ex) { /* già avviato, ignora */ }
-  }
-
-  _avviaLoop();
+  _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  _speechMime = _speechMediaRec.mimeType;
+  _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
+  _speechMediaRec.start(500);
 }
 
 async function _stopSpeech() {
   if (!_speechActive) return;
   _speechActive = false;
-  _speechSRLoop = false;
   const target = _speechTarget;
   _speechTarget = null;
 
-  // Ferma SpeechRecognition
-  if (_speechSR) {
-    try { _speechSR.abort(); } catch(e) { /* ignora */ }
-    _speechSR = null;
+  const btnId      = target === 'gen' ? 'speech-gen' : `speech-${target}`;
+  const textareaId = target === 'gen' ? 'note-gen'   : `note-${target}`;
+
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.classList.remove('listening'); btn.textContent = '⏳'; btn.disabled = true; }
+
+  // Ferma registrazione e ottieni blob audio
+  const audioBlob = await new Promise(resolve => {
+    _speechMediaRec.onstop = () => {
+      _speechStream.getTracks().forEach(t => t.stop());
+      resolve(new Blob(_speechChunks, { type: _speechMime || 'audio/webm' }));
+    };
+    _speechMediaRec.stop();
+  });
+
+  _speechMediaRec = null;
+  _speechStream   = null;
+
+  // Salva audio nell'ispezione
+  const isp = db.ispezioni[S.ispezioneId];
+  const audioId = await salvaMedia(isp.id, audioBlob, 'audio');
+  if (target === 'gen') getStazione().audio.push(audioId);
+  else                  getElemento(target).audio.push(audioId);
+  await salvaIspezione(isp);
+
+  // Trascrivi con Whisper
+  toast('🔄 Trascrizione in corso…', 10000);
+  let testo = '';
+  try {
+    testo = await _trascriviBlob(audioBlob);
+  } catch(e) {
+    console.error('Whisper error:', e);
+    toast('⚠ Trascrizione fallita. Audio salvato comunque.', 4000);
+    if (btn) { btn.textContent = '🎤'; btn.disabled = false; btn.title = 'Trascrivi con microfono'; }
+    viewStazione();
+    return;
   }
 
-  // UI
-  const btnId = target === 'gen' ? 'speech-gen' : `speech-${target}`;
-  const btn   = document.getElementById(btnId);
-  if (btn) btn.classList.remove('listening');
-
-  // Salva testo note
-  const textareaId = target === 'gen' ? 'note-gen' : `note-${target}`;
-  const ta = document.getElementById(textareaId);
-  const testoFinale = ta ? ta.value : _speechBaseText;
+  // Inserisce testo trascritto nelle note
+  const testoFinale = (_speechBaseText + (testo ? ' ' + testo : '')).trim();
   if (target === 'gen') await setNoteGen(testoFinale);
   else                  await setNote(target, testoFinale);
 
-  // Ferma stream microfono e salva audio
-  if (_speechMediaRec && _speechMediaRec.state !== 'inactive') {
-    const mime   = _speechMime; // già salvato — non dipende dal recorder
-    const chunks = _speechChunks;
-    const stream = _speechStream;
-
-    await new Promise(resolve => {
-      _speechMediaRec.onstop = async () => {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-        if (chunks.length) {
-          try {
-            const blob = new Blob(chunks, { type: mime || 'audio/webm' });
-            const isp  = db.ispezioni[S.ispezioneId];
-            const id   = await salvaMedia(isp.id, blob, 'audio');
-            if (target === 'gen') getStazione().audio.push(id);
-            else                  getElemento(target).audio.push(id);
-            await salvaIspezione(isp);
-          } catch(e) { console.error('Salvataggio audio speech:', e); }
-        }
-        resolve();
-      };
-      _speechMediaRec.stop();
-    });
-
-    _speechMediaRec = null;
-    _speechStream   = null;
-    _speechChunks   = [];
-    _speechMime     = '';
-  } else {
-    // Recorder non partito (es. getUserMedia fallito)
-    if (_speechStream) _speechStream.getTracks().forEach(t => t.stop());
-    _speechStream = null;
-  }
-
+  toast('✓ Trascrizione completata', 2500);
   viewStazione();
 }
 
