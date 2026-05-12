@@ -723,6 +723,15 @@ function viewIspezione() {
       + Nuova stazione
     </button>
 
+    ${isp.stazioni.length > 0 ? `
+    <button class="btn btn-outline btn-block" onclick="trascriviTutto()" id="btn-trascrivi-tutto" style="margin-bottom:12px">
+      🎙 Trascrivi tutto
+    </button>
+    <div id="trascrivi-tutto-progress" style="display:none;margin-bottom:12px">
+      <div id="trascrivi-tutto-label" style="font-size:13px;color:var(--muted);margin-bottom:4px"></div>
+      <div class="progress-bar"><div class="progress-fill" id="trascrivi-tutto-fill" style="width:0%"></div></div>
+    </div>` : ''}
+
     ${stList}
 
     <div style="margin-top:16px">
@@ -791,6 +800,8 @@ function esportaReport()           { _esportaReport().catch(e => toast("⚠ " + 
 function setCHSGen(val)            { setCHSGenAsync(val).catch(e => toast("⚠ " + e.message)); }
 function salvaElementi()           { salvaElementiAsync().catch(e => toast("⚠ " + e.message)); }
 function viewStazione()            { viewStazioneAsync().catch(e => toast("⚠ " + e.message)); }
+function trascriviStazione()       { _trascriviStazione().catch(e => toast("⚠ " + e.message)); }
+function trascriviTutto()          { _trascriviTutto().catch(e => toast("⚠ " + e.message)); }
 
 async function _viewNuovaStazione() {
   const isp = db.ispezioni[S.ispezioneId];
@@ -870,17 +881,9 @@ async function viewStazioneAsync() {
       ${e.chs && e.chs !== 'NA' ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">← ${chsLabel(e.chs)}</div>` : ''}
       <div class="form-group">
         <label class="form-label">Note</label>
-        <div style="position:relative">
-          <textarea id="note-${ei}" placeholder="Osservazioni, anomalie rilevate…"
-            onchange="setNote(${ei},this.value)"
-            style="padding-right:38px;width:100%">${escHtml(e.note)}</textarea>
-          <button class="speech-btn" id="speech-${ei}"
-            onclick="toggleSpeech(${ei})"
-            title="Trascrivi con microfono"
-            style="position:absolute;right:6px;top:6px;padding:4px;border-radius:50%;width:28px;height:28px;justify-content:center">
-            🎤
-          </button>
-        </div>
+        <textarea id="note-${ei}" placeholder="Osservazioni, anomalie rilevate…"
+          onchange="setNote(${ei},this.value)"
+          style="width:100%">${escHtml(e.note)}</textarea>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <div class="file-input-wrap">
@@ -921,17 +924,9 @@ async function viewStazioneAsync() {
       </div>
       <div class="form-group">
         <label class="form-label">Note generali stazione</label>
-        <div style="position:relative">
-          <textarea id="note-gen" placeholder="Condizioni generali, accesso, meteo…"
-            onchange="setNoteGen(this.value)"
-            style="padding-right:38px;width:100%">${escHtml(s.note_gen||'')}</textarea>
-          <button class="speech-btn" id="speech-gen"
-            onclick="toggleSpeech('gen')"
-            title="Trascrivi con microfono"
-            style="position:absolute;right:6px;top:6px;padding:4px;border-radius:50%;width:28px;height:28px;justify-content:center">
-            🎤
-          </button>
-        </div>
+        <textarea id="note-gen" placeholder="Condizioni generali, accesso, meteo…"
+          onchange="setNoteGen(this.value)"
+          style="width:100%">${escHtml(s.note_gen||'')}</textarea>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <div class="file-input-wrap">
@@ -951,9 +946,19 @@ async function viewStazioneAsync() {
       <button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>
     </div>
     ${elemHtml}
+
+    <div style="margin-top:16px;margin-bottom:8px">
+      <button class="btn btn-outline btn-block" onclick="trascriviStazione()" id="btn-trascrivi-stazione">
+        🎙 Trascrivi audio stazione
+      </button>
+      <div id="trascrivi-progress" style="display:none;margin-top:10px">
+        <div id="trascrivi-label" style="font-size:13px;color:var(--muted);margin-bottom:4px"></div>
+        <div class="progress-bar"><div class="progress-fill" id="trascrivi-fill" style="width:0%"></div></div>
+      </div>
+    </div>
   `);
 
-  // I pulsanti 🎤 usano Whisper offline, disponibile su tutti i browser moderni
+  // I pulsanti 🎤 sono stati rimossi: usare il pulsante "Trascrivi audio stazione"
 }
 
 
@@ -1088,35 +1093,32 @@ async function salvaElementiAsync() {
   viewStazione();
 }
 
-// ─── WHISPER OFFLINE (trascrizione) ──────────────────────────────────────────
-// Usa @xenova/transformers (Whisper tiny multilingual) via CDN.
-// Il modello (~40MB) viene scaricato una volta e messo in cache dal browser.
-// Funziona OFFLINE dopo il primo download. Nessun server necessario.
+// ─── WHISPER OFFLINE ──────────────────────────────────────────────────────────
+// Modello: whisper-small (~180MB, download una volta sola, poi offline via Cache API)
+// Accuratezza superiore a tiny, specialmente per l'italiano.
 
-let _whisperPipe    = null;   // pipeline Whisper (caricata al primo uso)
+let _whisperPipe    = null;
 let _whisperLoading = false;
 
 async function _getWhisper() {
   if (_whisperPipe) return _whisperPipe;
   if (_whisperLoading) {
-    // Aspetta che finisca il caricamento già avviato
-    while (_whisperLoading) await new Promise(r => setTimeout(r, 200));
+    while (_whisperLoading) await new Promise(r => setTimeout(r, 300));
     return _whisperPipe;
   }
   _whisperLoading = true;
   try {
-    toast('⏳ Caricamento modello Whisper… (solo la prima volta, ~40MB)', 8000);
+    _aggiornaTrLabel('⏳ Caricamento modello Whisper… (solo la prima volta, ~180MB)');
     const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
-    _whisperPipe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+    _whisperPipe = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small', {
       quantized: true,
       progress_callback: p => {
         if (p.status === 'downloading') {
           const pct = p.total ? Math.round(p.loaded / p.total * 100) : '…';
-          toast(`⏳ Download modello: ${pct}%`, 3000);
+          _aggiornaTrLabel(`⏳ Download modello Whisper: ${pct}%`);
         }
       }
     });
-    toast('✓ Modello pronto', 2000);
   } catch(e) {
     _whisperLoading = false;
     throw e;
@@ -1127,7 +1129,6 @@ async function _getWhisper() {
 
 async function _trascriviBlob(audioBlob) {
   const pipe = await _getWhisper();
-  // Converti blob in ArrayBuffer → Float32Array (PCM mono 16kHz richiesto da Whisper)
   const arrayBuf = await audioBlob.arrayBuffer();
   const audioBuf = await new AudioContext({ sampleRate: 16000 }).decodeAudioData(arrayBuf);
   const float32  = audioBuf.getChannelData(0);
@@ -1135,109 +1136,182 @@ async function _trascriviBlob(audioBlob) {
   return (result.text || '').trim();
 }
 
-// ─── SPEECH TO NOTE ───────────────────────────────────────────────────────────
-// Flusso: premi 🎤 → registra audio (rosso) → premi di nuovo → Whisper trascrive → testo nelle note + audio salvato
-let _speechActive   = false;
-let _speechTarget   = null;
-let _speechBaseText = '';
-let _speechStream   = null;
-let _speechMediaRec = null;
-let _speechChunks   = [];
-let _speechMime     = '';
-
-function toggleSpeech(target) {
-  if (_speechActive && _speechTarget === target) {
-    _stopSpeech();
-  } else {
-    _startSpeech(target);
-  }
+// Helper per etichetta orario
+function _etichettaAudio(audioId) {
+  // Estrae l'orario dall'ID (formato uuid con timestamp non disponibile)
+  // Usa l'orario corrente della trascrizione come riferimento
+  const ora = new Date().toTimeString().slice(0,5);
+  return `[Audio ${ora}]`;
 }
 
-async function _startSpeech(target) {
-  const btnId      = target === 'gen' ? 'speech-gen'  : `speech-${target}`;
-  const textareaId = target === 'gen' ? 'note-gen'    : `note-${target}`;
+// Helper aggiorna label progress (funziona sia per stazione che per ispezione)
+let _trProgressEl  = null;
+let _trFillEl      = null;
+let _trLabelEl     = null;
 
-  // Avvia precaricamento modello in background (non blocca)
-  _getWhisper().catch(() => {});
-
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-  } catch(err) {
-    if (err.name === 'NotAllowedError') toast('⚠ Permesso microfono negato. Controlla le impostazioni.');
-    else toast('⚠ Microfono non accessibile: ' + (err.message || err.name));
-    return;
-  }
-
-  _speechActive   = true;
-  _speechTarget   = target;
-  _speechBaseText = document.getElementById(textareaId)?.value || '';
-  _speechChunks   = [];
-  _speechMime     = '';
-  _speechStream   = stream;
-
-  const btn = document.getElementById(btnId);
-  if (btn) { btn.classList.add('listening'); btn.title = 'Tocca per fermare e trascrivere'; }
-
-  const mime = getSupportedMime();
-  _speechMediaRec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-  _speechMime = _speechMediaRec.mimeType;
-  _speechMediaRec.ondataavailable = e => { if (e.data && e.data.size > 0) _speechChunks.push(e.data); };
-  _speechMediaRec.start(500);
+function _aggiornaTrLabel(testo, pct) {
+  if (_trLabelEl) _trLabelEl.textContent = testo;
+  if (_trFillEl && pct !== undefined) _trFillEl.style.width = pct + '%';
 }
 
-async function _stopSpeech() {
-  if (!_speechActive) return;
-  _speechActive = false;
-  const target = _speechTarget;
-  _speechTarget = null;
-
-  const btnId      = target === 'gen' ? 'speech-gen' : `speech-${target}`;
-  const textareaId = target === 'gen' ? 'note-gen'   : `note-${target}`;
-
-  const btn = document.getElementById(btnId);
-  if (btn) { btn.classList.remove('listening'); btn.textContent = '⏳'; btn.disabled = true; }
-
-  // Ferma registrazione e ottieni blob audio
-  const audioBlob = await new Promise(resolve => {
-    _speechMediaRec.onstop = () => {
-      _speechStream.getTracks().forEach(t => t.stop());
-      resolve(new Blob(_speechChunks, { type: _speechMime || 'audio/webm' }));
-    };
-    _speechMediaRec.stop();
-  });
-
-  _speechMediaRec = null;
-  _speechStream   = null;
-
-  // Salva audio nell'ispezione
+// ─── TRASCRIVI STAZIONE ───────────────────────────────────────────────────────
+async function _trascriviStazione() {
   const isp = db.ispezioni[S.ispezioneId];
-  const audioId = await salvaMedia(isp.id, audioBlob, 'audio');
-  if (target === 'gen') getStazione().audio.push(audioId);
-  else                  getElemento(target).audio.push(audioId);
-  await salvaIspezione(isp);
+  const s   = getStazione();
+  if (!isp.audioTrascritti) isp.audioTrascritti = {};
 
-  // Trascrivi con Whisper
-  toast('🔄 Trascrizione in corso…', 10000);
-  let testo = '';
-  try {
-    testo = await _trascriviBlob(audioBlob);
-  } catch(e) {
-    console.error('Whisper error:', e);
-    toast('⚠ Trascrizione fallita. Audio salvato comunque.', 4000);
-    if (btn) { btn.textContent = '🎤'; btn.disabled = false; btn.title = 'Trascrivi con microfono'; }
-    viewStazione();
+  // Raccoglie tutti gli audio della stazione con metadati
+  const coda = [];
+
+  // Audio note generali
+  for (const id of (s.audio || [])) {
+    if (!isp.audioTrascritti[id]) coda.push({ id, target: 'gen', label: 'Note generali' });
+  }
+  // Audio elementi
+  const nomi = Object.keys(s.elementi);
+  for (let ei = 0; ei < nomi.length; ei++) {
+    const el = s.elementi[nomi[ei]];
+    for (const id of (el.audio || [])) {
+      if (!isp.audioTrascritti[id]) coda.push({ id, target: ei, label: nomi[ei] });
+    }
+  }
+
+  if (coda.length === 0) {
+    toast('ℹ Nessun audio da trascrivere (già trascritti o assenti)', 3000);
     return;
   }
 
-  // Inserisce testo trascritto nelle note
-  const testoFinale = (_speechBaseText + (testo ? ' ' + testo : '')).trim();
-  if (target === 'gen') await setNoteGen(testoFinale);
-  else                  await setNote(target, testoFinale);
+  // Mostra progress
+  const btnEl   = document.getElementById('btn-trascrivi-stazione');
+  const progEl  = document.getElementById('trascrivi-progress');
+  _trLabelEl    = document.getElementById('trascrivi-label');
+  _trFillEl     = document.getElementById('trascrivi-fill');
+  if (btnEl)  { btnEl.disabled = true; btnEl.textContent = '⏳ Trascrizione in corso…'; }
+  if (progEl) progEl.style.display = 'block';
 
-  toast('✓ Trascrizione completata', 2500);
+  let ok = 0, errori = 0;
+  for (let i = 0; i < coda.length; i++) {
+    const { id, target, label } = coda[i];
+    const pct = Math.round((i / coda.length) * 100);
+    _aggiornaTrLabel(`Trascrizione audio ${i+1} di ${coda.length} — ${label}`, pct);
+
+    try {
+      // Recupera blob audio da IndexedDB
+      const mediaRec = await idbGet('media', id);
+      if (!mediaRec) { errori++; continue; }
+      const audioBlob = mediaRec.blob;
+
+      const testo = await _trascriviBlob(audioBlob);
+      if (!testo) { isp.audioTrascritti[id] = true; ok++; continue; }
+
+      // Orario della trascrizione come etichetta
+      const ora = new Date().toTimeString().slice(0,5);
+      const etichetta = `[Audio ${ora}] `;
+
+      // Aggiunge alle note senza sovrascrivere
+      if (target === 'gen') {
+        const noteAttuali = s.note_gen || '';
+        s.note_gen = (noteAttuali + (noteAttuali ? '\n' : '') + etichetta + testo).trim();
+      } else {
+        const el = s.elementi[nomi[target]];
+        const noteAttuali = el.note || '';
+        el.note = (noteAttuali + (noteAttuali ? '\n' : '') + etichetta + testo).trim();
+      }
+
+      isp.audioTrascritti[id] = true;
+      ok++;
+    } catch(e) {
+      console.error('Errore trascrizione audio', id, e);
+      errori++;
+    }
+  }
+
+  await salvaIspezione(isp);
+  _aggiornaTrLabel(`✓ Completato: ${ok} trascritti${errori ? ', ' + errori + ' errori' : ''}`, 100);
+  await new Promise(r => setTimeout(r, 1500));
+  toast(`✓ ${ok} audio trascritti${errori ? ', ' + errori + ' falliti' : ''}`, 3000);
   viewStazione();
 }
+
+// ─── TRASCRIVI TUTTO (ispezione) ─────────────────────────────────────────────
+async function _trascriviTutto() {
+  const isp = db.ispezioni[S.ispezioneId];
+  if (!isp.audioTrascritti) isp.audioTrascritti = {};
+
+  // Raccoglie tutti gli audio di tutte le stazioni
+  const coda = [];
+  for (let si = 0; si < isp.stazioni.length; si++) {
+    const s    = isp.stazioni[si];
+    const prog = s.progressiva !== undefined ? s.progressiva + ' m' : `Stazione ${si+1}`;
+
+    for (const id of (s.audio || [])) {
+      if (!isp.audioTrascritti[id]) coda.push({ id, si, target: 'gen', stLabel: prog, elLabel: 'Note generali' });
+    }
+    const nomi = Object.keys(s.elementi);
+    for (let ei = 0; ei < nomi.length; ei++) {
+      for (const id of (s.elementi[nomi[ei]].audio || [])) {
+        if (!isp.audioTrascritti[id]) coda.push({ id, si, target: ei, stLabel: prog, elLabel: nomi[ei] });
+      }
+    }
+  }
+
+  if (coda.length === 0) {
+    toast('ℹ Nessun audio da trascrivere (già trascritti o assenti)', 3000);
+    return;
+  }
+
+  // Mostra progress
+  const btnEl   = document.getElementById('btn-trascrivi-tutto');
+  const progEl  = document.getElementById('trascrivi-tutto-progress');
+  _trLabelEl    = document.getElementById('trascrivi-tutto-label');
+  _trFillEl     = document.getElementById('trascrivi-tutto-fill');
+  if (btnEl)  { btnEl.disabled = true; btnEl.textContent = '⏳ Trascrizione in corso…'; }
+  if (progEl) progEl.style.display = 'block';
+
+  let ok = 0, errori = 0;
+  for (let i = 0; i < coda.length; i++) {
+    const { id, si, target, stLabel, elLabel } = coda[i];
+    const pct = Math.round((i / coda.length) * 100);
+    _aggiornaTrLabel(`Stazione ${stLabel} — ${elLabel} (${i+1}/${coda.length})`, pct);
+
+    try {
+      const mediaRec = await idbGet('media', id);
+      if (!mediaRec) { errori++; continue; }
+      const audioBlob = mediaRec.blob;
+
+      const testo = await _trascriviBlob(audioBlob);
+      if (!testo) { isp.audioTrascritti[id] = true; ok++; continue; }
+
+      const ora = new Date().toTimeString().slice(0,5);
+      const etichetta = `[Audio ${ora}] `;
+
+      const s    = isp.stazioni[si];
+      const nomi = Object.keys(s.elementi);
+      if (target === 'gen') {
+        const noteAttuali = s.note_gen || '';
+        s.note_gen = (noteAttuali + (noteAttuali ? '\n' : '') + etichetta + testo).trim();
+      } else {
+        const el = s.elementi[nomi[target]];
+        const noteAttuali = el.note || '';
+        el.note = (noteAttuali + (noteAttuali ? '\n' : '') + etichetta + testo).trim();
+      }
+
+      isp.audioTrascritti[id] = true;
+      ok++;
+    } catch(e) {
+      console.error('Errore trascrizione audio', id, e);
+      errori++;
+    }
+  }
+
+  await salvaIspezione(isp);
+  _aggiornaTrLabel(`✓ Completato: ${ok} trascritti${errori ? ', ' + errori + ' errori' : ''}`, 100);
+  await new Promise(r => setTimeout(r, 1500));
+  toast(`✓ ${ok} audio trascritti${errori ? ', ' + errori + ' falliti' : ''}`, 3000);
+  viewIspezione();
+}
+
+// ─── REGISTRAZIONE AUDIO (MediaRecorder) ─────────────────────────────────────
 
 function audioItem(src, delFn) {
   return `<div class="audio-item">
