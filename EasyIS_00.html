@@ -126,7 +126,14 @@
   .chs-na { background: #f0f0f0; color: #666; }
   .chs-btn.selected { border-color: var(--text) !important; box-shadow: 0 0 0 2px var(--text); }
 
-  .speech-btn {
+  .foto-didascalia {
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    padding: 2px 4px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+  }
     display: inline-flex; align-items: center; gap: 6px;
     padding: 7px 12px; border-radius: 20px;
     border: 1px solid var(--border); background: var(--surface);
@@ -431,8 +438,30 @@ function revocaBlobUrls() {
 // Carica tutte le ispezioni in memoria all'avvio
 async function caricaTutteIspezioni() {
   db.ispezioni = await idbGetAll("ispezioni");
-  // Ordina per data decrescente
   db.ispezioni.sort((a,b) => b.data.localeCompare(a.data));
+
+  // Migrazione struttura foto: da [id, id] a [{id, didascalia}]
+  // Eseguita una sola volta per ogni ispezione non ancora migrata
+  let migrated = false;
+  for (const isp of db.ispezioni) {
+    let changed = false;
+    for (const s of isp.stazioni) {
+      // foto_gen stazione
+      if (s.foto_gen && s.foto_gen.length && typeof s.foto_gen[0] === 'string') {
+        s.foto_gen = s.foto_gen.map(id => ({ id, didascalia: '' }));
+        changed = true;
+      }
+      for (const nome of Object.keys(s.elementi)) {
+        const el = s.elementi[nome];
+        if (el.foto && el.foto.length && typeof el.foto[0] === 'string') {
+          el.foto = el.foto.map(id => ({ id, didascalia: '' }));
+          changed = true;
+        }
+      }
+    }
+    if (changed) { await salvaIspezione(isp); migrated = true; }
+  }
+  if (migrated) console.log('Migrazione struttura foto completata');
 }
 
 // Migrazione da localStorage (eseguita una sola volta)
@@ -489,6 +518,31 @@ function dataUrlToBlob(dataUrl) {
   const arr   = new Uint8Array(bytes.length);
   for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
   return new Blob([arr], { type: mime });
+}
+
+// Calcola il numero progressivo globale di una foto nell'ispezione (base 1)
+// Itera su tutte le stazioni → foto_gen → elementi → foto nell'ordine
+function numerazioneFotoIspezione(isp) {
+  // Restituisce una Map: id → numero progressivo
+  const map = new Map();
+  let n = 1;
+  for (const s of isp.stazioni) {
+    for (const f of (s.foto_gen || [])) {
+      if (f && f.id && !map.has(f.id)) map.set(f.id, n++);
+    }
+    for (const nome of Object.keys(s.elementi)) {
+      for (const f of (s.elementi[nome].foto || [])) {
+        if (f && f.id && !map.has(f.id)) map.set(f.id, n++);
+      }
+    }
+  }
+  return map;
+}
+
+function didascaliaFoto(fotoObj, numMap) {
+  if (!fotoObj) return '';
+  const n = numMap.get(fotoObj.id);
+  return n ? `Foto ${String(n).padStart(2,'0')}` : '';
 }
 
 // Converte blob media in base64 (per export)
@@ -791,7 +845,7 @@ function viewNuovaStazione()       { _viewNuovaStazione().catch(e => toast("⚠ 
 function creaIspezione()           { _creaIspezione().catch(e => toast("⚠ " + e.message)); }
 function setChs(ei, val)           { _setChs(ei, val).catch(e => toast("⚠ " + e.message)); }
 function delFoto(ei, i)            { _delFoto(ei, i).catch(e => toast("⚠ " + e.message)); }
-function delFotoGen(i)             { _delFotoGen(i).catch(e => toast("⚠ " + e.message)); }
+function delFotoGen(i)             { chiediDelFotoGen(i); }
 function eliminaIspezione()        { _eliminaIspezione(); }
 function eliminaStazione(idx)      { _eliminaStazione(idx); }
 function esportaJSON()             { _esportaJSON().catch(e => toast("⚠ " + e.message)); }
@@ -832,20 +886,28 @@ function getStazione() {
 async function viewStazioneAsync() {
   revocaBlobUrls();
   const s = getStazione();
+  const isp = db.ispezioni[S.ispezioneId];
+  const numMap = numerazioneFotoIspezione(isp);
   const nomiElementi = Object.keys(s.elementi);
 
   // Blob URL dati generali
-  const fotoGenUrls  = await Promise.all((s.foto_gen||[]).map(id => getBlobUrl(id)));
+  const fotoGenUrls  = await Promise.all((s.foto_gen||[]).map(f => f && f.id ? getBlobUrl(f.id) : null));
   const audioGenUrls = await Promise.all((s.audio||[]).map(id => getBlobUrl(id)));
 
-  const fotoGenHtml = fotoGenUrls.map((url, i) => url ? `
+  const fotoGenHtml = fotoGenUrls.map((url, i) => {
+    if (!url) return '';
+    const fotoObj = (s.foto_gen||[])[i];
+    const did = didascaliaFoto(fotoObj, numMap);
+    return `
     <div class="foto-item">
       <img src="${url}" onclick="openLightbox(this.src)" loading="lazy">
-      <button class="foto-del" onclick="delFotoGen(${i})">✕</button>
-    </div>` : '').join("");
+      ${did ? `<div class="foto-didascalia">${did}</div>` : ''}
+      <button class="foto-del" onclick="delFotoGen(${i})" title="Elimina foto">✕</button>
+    </div>`;
+  }).join("");
 
   const audioGenHtml = audioGenUrls.map((url, i) =>
-    url ? audioItem(url, `delAudioStazione(${i})`) : ''
+    url ? audioItem(url, `chiediDelAudioStazione(${i})`) : ''
   ).join("");
 
   // CHS generale stazione
@@ -855,20 +917,26 @@ async function viewStazioneAsync() {
   // Elementi
   const elementiDati = await Promise.all(nomiElementi.map(async (nome, ei) => {
     const e = s.elementi[nome];
-    const fotoUrls  = await Promise.all(e.foto.map(id => getBlobUrl(id)));
+    const fotoUrls  = await Promise.all(e.foto.map(f => f && f.id ? getBlobUrl(f.id) : null));
     const audioUrls = await Promise.all(e.audio.map(id => getBlobUrl(id)));
     return { nome, ei, e, fotoUrls, audioUrls };
   }));
 
   const elemHtml = elementiDati.map(({ nome, ei, e, fotoUrls, audioUrls }) => {
-    const fotoHtml = fotoUrls.map((url, i) => url ? `
+    const fotoHtml = fotoUrls.map((url, i) => {
+      if (!url) return '';
+      const fotoObj = e.foto[i];
+      const did = didascaliaFoto(fotoObj, numMap);
+      return `
       <div class="foto-item">
         <img src="${url}" onclick="openLightbox(this.src)" loading="lazy">
-        <button class="foto-del" onclick="delFoto(${ei},${i})">✕</button>
-      </div>` : '').join("");
+        ${did ? `<div class="foto-didascalia">${did}</div>` : ''}
+        <button class="foto-del" onclick="chiediDelFoto(${ei},${i})" title="Elimina foto">✕</button>
+      </div>`;
+    }).join("");
 
     const audioHtml = audioUrls.map((url, i) =>
-      url ? audioItem(url, `delAudio(${ei},${i})`) : ''
+      url ? audioItem(url, `chiediDelAudio(${ei},${i})`) : ''
     ).join("");
 
     return `
@@ -1374,7 +1442,7 @@ async function addFotoGen(event) {
         const id = await salvaMedia(isp.id, blob, "foto");
         const s = getStazione();
         if (!s.foto_gen) s.foto_gen = [];
-        s.foto_gen.push(id);
+        s.foto_gen.push({ id, didascalia: '' });
         await salvaIspezione(isp);
         viewStazione();
       }, "image/jpeg", 0.80);
@@ -1386,12 +1454,37 @@ async function addFotoGen(event) {
 
 async function _delFotoGen(i) {
   const s = getStazione();
-  const id = s.foto_gen[i];
+  const fotoObj = s.foto_gen[i];
+  const id = fotoObj && fotoObj.id ? fotoObj.id : fotoObj;
   await idbDelete("media", id);
   if (_blobUrls[id]) { URL.revokeObjectURL(_blobUrls[id]); delete _blobUrls[id]; }
   s.foto_gen.splice(i, 1);
   await salvaIspezione(db.ispezioni[S.ispezioneId]);
   viewStazione();
+}
+
+function chiediDelFoto(ei, i) {
+  mostraConferma('Elimina foto', 'Sei sicuro di voler eliminare questa foto? L\'operazione non è reversibile.', () => {
+    _delFoto(ei, i).catch(e => toast('⚠ ' + e.message));
+  });
+}
+
+function chiediDelFotoGen(i) {
+  mostraConferma('Elimina foto', 'Sei sicuro di voler eliminare questa foto? L\'operazione non è reversibile.', () => {
+    _delFotoGen(i).catch(e => toast('⚠ ' + e.message));
+  });
+}
+
+function chiediDelAudio(ei, i) {
+  mostraConferma('Elimina audio', 'Sei sicuro di voler eliminare questa registrazione? L\'operazione non è reversibile.', () => {
+    delAudio(ei, i).catch(e => toast('⚠ ' + e.message));
+  });
+}
+
+function chiediDelAudioStazione(i) {
+  mostraConferma('Elimina audio', 'Sei sicuro di voler eliminare questa registrazione? L\'operazione non è reversibile.', () => {
+    delAudioStazione(i).catch(e => toast('⚠ ' + e.message));
+  });
 }
 
 async function setNomeAltro(val) {
@@ -1431,7 +1524,7 @@ async function addFoto(event, ei) {
       cvs.toBlob(async blob => {
         const isp = db.ispezioni[S.ispezioneId];
         const id = await salvaMedia(isp.id, blob, "foto");
-        getElemento(ei).foto.push(id);
+        getElemento(ei).foto.push({ id, didascalia: '' });
         await salvaIspezione(isp);
         viewStazione();
       }, "image/jpeg", 0.80);
@@ -1443,7 +1536,8 @@ async function addFoto(event, ei) {
 
 async function _delFoto(ei, i) {
   const el = getElemento(ei);
-  const id = el.foto[i];
+  const fotoObj = el.foto[i];
+  const id = fotoObj && fotoObj.id ? fotoObj.id : fotoObj;
   await idbDelete("media", id);
   if (_blobUrls[id]) { URL.revokeObjectURL(_blobUrls[id]); delete _blobUrls[id]; }
   el.foto.splice(i, 1);
@@ -1549,15 +1643,20 @@ function viewEsportaIspezione() {
 async function _esportaJSON() {
   toast("⏳ Preparazione export…", 3000);
   const isp = db.ispezioni[S.ispezioneId];
+  // Calcola numerazione foto prima del clone (usa i dati originali con gli ID)
+  const numMap = numerazioneFotoIspezione(isp);
   // Deep clone per non modificare l'originale
   const exp = JSON.parse(JSON.stringify(isp));
-  // Sostituisci ogni ID media con il base64 corrispondente
+  // Sostituisci ogni ID media con il base64 + didascalia numerata
   for (const s of exp.stazioni) {
     for (const nome of Object.keys(s.elementi)) {
       const el = s.elementi[nome];
-      el.foto  = await Promise.all(el.foto.map(async id => {
+      el.foto  = await Promise.all(el.foto.map(async fotoObj => {
+        const id = fotoObj && fotoObj.id ? fotoObj.id : fotoObj;
+        const n  = numMap.get(id);
+        const did = n ? `Foto ${String(n).padStart(2,'0')}` : '';
         const r = await idbGet("media", id);
-        return r ? await blobToBase64(r.blob) : null;
+        return r ? { base64: await blobToBase64(r.blob), didascalia: did } : null;
       }));
       el.audio = await Promise.all(el.audio.map(async id => {
         const r = await idbGet("media", id);
@@ -1567,6 +1666,13 @@ async function _esportaJSON() {
     s.audio = await Promise.all(s.audio.map(async id => {
       const r = await idbGet("media", id);
       return r ? await blobToBase64(r.blob) : null;
+    }));
+    s.foto_gen = await Promise.all((s.foto_gen||[]).map(async fotoObj => {
+      const id = fotoObj && fotoObj.id ? fotoObj.id : fotoObj;
+      const n  = numMap.get(id);
+      const did = n ? `Foto ${String(n).padStart(2,'0')}` : '';
+      const r = await idbGet("media", id);
+      return r ? { base64: await blobToBase64(r.blob), didascalia: did } : null;
     }));
   }
   const blob = new Blob([JSON.stringify(exp, null, 2)], { type: "application/json" });
