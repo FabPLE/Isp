@@ -777,15 +777,6 @@ function viewIspezione() {
       + Nuova stazione
     </button>
 
-    ${isp.stazioni.length > 0 ? `
-    <button class="btn btn-outline btn-block" onclick="trascriviTutto()" id="btn-trascrivi-tutto" style="margin-bottom:12px">
-      🎙 Trascrivi tutto
-    </button>
-    <div id="trascrivi-tutto-progress" style="display:none;margin-bottom:12px">
-      <div id="trascrivi-tutto-label" style="font-size:13px;color:var(--muted);margin-bottom:4px"></div>
-      <div class="progress-bar"><div class="progress-fill" id="trascrivi-tutto-fill" style="width:0%"></div></div>
-    </div>` : ''}
-
     ${stList}
 
     <div style="margin-top:16px">
@@ -843,7 +834,6 @@ function creaElementiDefault() {
 // Wrapper sincroni per onclick inline (async non funziona direttamente negli onclick)
 function viewNuovaStazione()       { _viewNuovaStazione().catch(e => toast("⚠ " + e.message)); }
 function creaIspezione()           { _creaIspezione().catch(e => toast("⚠ " + e.message)); }
-function setChs(ei, val)           { _setChs(ei, val).catch(e => toast("⚠ " + e.message)); }
 function delFoto(ei, i)            { _delFoto(ei, i).catch(e => toast("⚠ " + e.message)); }
 function delFotoGen(i)             { chiediDelFotoGen(i); }
 function eliminaIspezione()        { _eliminaIspezione(); }
@@ -1014,16 +1004,6 @@ async function viewStazioneAsync() {
       <button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>
     </div>
     ${elemHtml}
-
-    <div style="margin-top:16px;margin-bottom:8px">
-      <button class="btn btn-outline btn-block" onclick="trascriviStazione()" id="btn-trascrivi-stazione">
-        🎙 Trascrivi audio stazione
-      </button>
-      <div id="trascrivi-progress" style="display:none;margin-top:10px">
-        <div id="trascrivi-label" style="font-size:13px;color:var(--muted);margin-bottom:4px"></div>
-        <div class="progress-bar"><div class="progress-fill" id="trascrivi-fill" style="width:0%"></div></div>
-      </div>
-    </div>
   `);
 
   // I pulsanti 🎤 sono stati rimossi: usare il pulsante "Trascrivi audio stazione"
@@ -1495,13 +1475,15 @@ async function setNomeAltro(val) {
   }
 }
 
-async function _setChs(ei, val) {
+async function _setChs(val, ei) {
   const el = getElemento(ei);
-  // Stesso valore → deseleziona
+  if (!el) { toast('⚠ Elemento non trovato'); return; }
   el.chs = el.chs === val ? null : val;
   await salvaIspezione(db.ispezioni[S.ispezioneId]);
   viewStazione();
 }
+
+function setChs(val, ei) { _setChs(val, ei).catch(e => toast("⚠ " + e.message)); }
 
 async function setNote(ei, val) {
   getElemento(ei).note = val;
