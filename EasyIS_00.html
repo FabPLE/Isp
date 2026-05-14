@@ -601,13 +601,45 @@ function chsLabel(val) {
   return labels[val] || '–';
 }
 
+// Calcola il CHS effettivo di una stazione:
+// - Parte dal chs_gen impostato dall'utente (se presente)
+// - Se ci sono elementi con CHS numerico (escludendo NA), prende il minimo
+// - Se chs_gen è assegnato e il minimo degli elementi è inferiore → usa il minimo (correzione)
+// - Se chs_gen è assegnato e non ci sono elementi numerici → mantiene chs_gen
+// - Se chs_gen non è assegnato e ci sono elementi numerici → usa il minimo
+// - Se tutto è NA o non valutato → NA oppure null
+function chsEffettivoStazione(s) {
+  const chsGen = s.chs_gen ?? null;
+  // Elementi con CHS numerico (ignora NA per il calcolo)
+  const chsNumerici = Object.values(s.elementi)
+    .map(e => e.chs)
+    .filter(c => c && c !== 'NA')
+    .map(Number);
+  // Elementi con qualsiasi CHS (incluso NA)
+  const chsCompilati = Object.values(s.elementi).map(e => e.chs).filter(Boolean);
+
+  if (chsNumerici.length > 0) {
+    const minElem = Math.min(...chsNumerici);
+    if (chsGen && chsGen !== 'NA') {
+      // Se chs_gen numerico è in contrasto (maggiore del minimo) → correggi con il minimo
+      return Math.min(Number(chsGen), minElem);
+    }
+    return minElem;
+  }
+  // Nessun elemento numerico: tutti NA o non valutati
+  if (chsGen && chsGen !== 'NA') return Number(chsGen);
+  if (chsGen === 'NA') return 'NA';
+  // Nessun elemento numerico, nessun chs_gen: se tutti compilati sono NA → NA, altrimenti null
+  if (chsCompilati.length > 0 && chsCompilati.every(c => c === 'NA')) return 'NA';
+  return null;
+}
+
 function chsSummary(ispezione) {
-  const cnt = {1:0,2:0,3:0,4:0,5:0};
+  const cnt = {5:0, 4:0, 3:0, 2:0, 1:0, NA:0};
   ispezione.stazioni.forEach(s => {
-    Object.keys(s.elementi).forEach(k => {
-      const c = s.elementi[k].chs;
-      if (c) cnt[c]++;
-    });
+    const chs = chsEffettivoStazione(s);
+    if (chs === 'NA') cnt.NA++;
+    else if (chs !== null) cnt[chs]++;
   });
   return cnt;
 }
@@ -721,16 +753,8 @@ function viewIspezione() {
 
   const stList = isp.stazioni.length ? stazioniOrdinate(isp).map(({s, originalIdx}) => {
     const totElementi = Object.keys(s.elementi).length;
-    const chsAll = Object.values(s.elementi).map(e => e.chs);
-    const chsValutati = chsAll.filter(c => c && c !== 'NA');
-    const chsNA       = chsAll.filter(c => c === 'NA');
-    // CHS badge: minimo tra i numerici; se tutti NA → NA; se nessuno valutato → null (–)
-    let badgeChs = null;
-    if (chsValutati.length > 0) {
-      badgeChs = Math.min(...chsValutati.map(Number));
-    } else if (chsNA.length > 0 && chsNA.length === totElementi) {
-      badgeChs = 'NA';
-    }
+    const chsNumerici = Object.values(s.elementi).map(e => e.chs).filter(c => c && c !== 'NA');
+    const badgeChs = chsEffettivoStazione(s);
     const progLabel = (s.progressiva === 0 || s.progressiva === '0') ? '0' : escHtml(String(s.progressiva || ''));
     return `
     <div class="card" style="display:flex;align-items:center;gap:10px;cursor:default">
@@ -738,7 +762,7 @@ function viewIspezione() {
         <div class="card-row">
           <div>
             <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${progLabel} m</div>
-            <div class="card-meta">${totElementi} elementi · ${chsValutati.length} valutati</div>
+            <div class="card-meta">${totElementi} elementi · ${chsNumerici.length} valutati</div>
           </div>
           ${chsBadge(badgeChs)}
         </div>
@@ -774,20 +798,33 @@ function viewIspezione() {
         <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
         ${!isp.lunghezza ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Inserisci la lunghezza opera per calcolare l'avanzamento</div>` : ''}
       </div>
-      ${isp.stazioni.length > 0 ? `
-      <div class="summary-grid" style="margin-top:12px;grid-template-columns:repeat(6,1fr)">
-        ${[5,4,3,2,1].map(v => {
-          const colors = {5:['var(--good-bg)','var(--good)'],4:['var(--ok-bg)','var(--ok)'],3:['var(--att-bg)','var(--att)'],2:['var(--bad-bg)','var(--bad)'],1:['var(--crit-bg)','var(--crit)']};
-          return `<div class="summary-cell" style="background:${colors[v][0]};color:${colors[v][1]}">
-            <div class="num">${cnt[v]}</div>
-            <div class="lbl">CHS ${v}</div>
-          </div>`;
-        }).join("")}
-        <div class="summary-cell" style="background:var(--accent-light);color:var(--accent)">
-          <div class="num">${isp.stazioni.length}</div>
-          <div class="lbl">Stazioni</div>
-        </div>
-      </div>` : ''}
+      ${isp.stazioni.length > 0 ? (() => {
+        const stValutate = isp.stazioni.filter(s => chsEffettivoStazione(s) !== null).length;
+        const totSt = isp.stazioni.length;
+        return `
+        <div style="margin-top:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div style="font-size:28px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--accent)">${totSt}</div>
+            <div style="text-align:right;font-size:12px;color:var(--muted);line-height:1.4">
+              <div style="font-weight:600;font-size:13px;color:var(--text)">Stazioni</div>
+              <div>${stValutate} con CHS assegnato</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:5px">
+            ${[5,4,3,2,1].map(v => {
+              const colors = {5:['var(--good-bg)','var(--good)'],4:['var(--ok-bg)','var(--ok)'],3:['var(--att-bg)','var(--att)'],2:['var(--bad-bg)','var(--bad)'],1:['var(--crit-bg)','var(--crit)']};
+              return `<div class="summary-cell" style="background:${colors[v][0]};color:${colors[v][1]}">
+                <div class="num">${cnt[v]}</div>
+                <div class="lbl">CHS ${v}</div>
+              </div>`;
+            }).join("")}
+            <div class="summary-cell" style="background:#f0f0f0;color:#666">
+              <div class="num">${cnt['NA']||0}</div>
+              <div class="lbl">NA</div>
+            </div>
+          </div>
+        </div>`;
+      })() : ''}
     </div>
 
     <button class="btn btn-primary btn-block" onclick="viewNuovaStazione()" style="margin-bottom:12px">
@@ -1002,6 +1039,17 @@ async function viewStazioneAsync() {
   // CHS generale stazione
   const chsGen = s.chs_gen ?? null;
   const chsGenHtml = chsRow(chsGen, 'setCHSGen', null);
+  const chsEffettivo = chsEffettivoStazione(s);
+  // Avviso di correzione: chs_gen è assegnato ma il minimo degli elementi lo abbassa
+  const chsNumericiElem = Object.values(s.elementi).map(e=>e.chs).filter(c=>c&&c!=='NA').map(Number);
+  const corretto = chsGen && chsGen !== 'NA' && chsNumericiElem.length > 0 && Math.min(...chsNumericiElem) < Number(chsGen);
+  const chsEffettivoHtml = chsEffettivo !== null
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <span style="font-size:12px;color:var(--muted)">CHS effettivo stazione:</span>
+        ${chsBadge(chsEffettivo)}
+        ${corretto ? `<span style="font-size:11px;color:var(--att);font-weight:500">⚠ corretto dal minimo degli elementi</span>` : ''}
+       </div>`
+    : '';
 
   // Elementi
   const elementiDati = await Promise.all(nomiElementi.map(async (nome, ei) => {
@@ -1088,6 +1136,7 @@ async function viewStazioneAsync() {
         <label class="form-label">CHS Generale stazione</label>
         <div class="chs-row">${chsGenHtml}</div>
         ${chsGen && chsGen !== 'NA' ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">← ${chsLabel(chsGen)}</div>` : ''}
+        ${chsEffettivoHtml}
       </div>
       <div class="form-group">
         <label class="form-label">Note generali stazione</label>
