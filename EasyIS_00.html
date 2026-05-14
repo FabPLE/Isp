@@ -720,17 +720,27 @@ function viewIspezione() {
   const cnt = chsSummary(isp);
 
   const stList = isp.stazioni.length ? stazioniOrdinate(isp).map(({s, originalIdx}) => {
-    const chsVals = Object.values(s.elementi).map(e=>e.chs).filter(Boolean);
-    const minChs = chsVals.length ? Math.min(...chsVals) : null;
+    const totElementi = Object.keys(s.elementi).length;
+    const chsAll = Object.values(s.elementi).map(e => e.chs);
+    const chsValutati = chsAll.filter(c => c && c !== 'NA');
+    const chsNA       = chsAll.filter(c => c === 'NA');
+    // CHS badge: minimo tra i numerici; se tutti NA → NA; se nessuno valutato → null (–)
+    let badgeChs = null;
+    if (chsValutati.length > 0) {
+      badgeChs = Math.min(...chsValutati.map(Number));
+    } else if (chsNA.length > 0 && chsNA.length === totElementi) {
+      badgeChs = 'NA';
+    }
+    const progLabel = (s.progressiva === 0 || s.progressiva === '0') ? '0' : escHtml(String(s.progressiva || ''));
     return `
     <div class="card" style="display:flex;align-items:center;gap:10px;cursor:default">
       <div style="flex:1;cursor:pointer" onclick="apriStazione(${originalIdx})">
         <div class="card-row">
           <div>
-            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${escHtml(s.progressiva)} m</div>
-            <div class="card-meta">${Object.keys(s.elementi).length} elementi · ${chsVals.length} valutati</div>
+            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${progLabel} m</div>
+            <div class="card-meta">${totElementi} elementi · ${chsValutati.length} valutati</div>
           </div>
-          ${chsBadge(minChs)}
+          ${chsBadge(badgeChs)}
         </div>
       </div>
       <button class="btn btn-danger btn-sm" onclick="eliminaStazione(${originalIdx})" title="Elimina stazione">🗑</button>
@@ -745,12 +755,15 @@ function viewIspezione() {
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;gap:12px;font-size:13px;color:var(--muted);flex-wrap:wrap">
-        <span>📅 ${isp.data}</span>
-        <span>👤 ${escHtml(isp.ispettore)}</span>
-        ${isp.impianto ? `<span>🏭 ${escHtml(isp.impianto)}</span>` : ''}
-        ${isp.comune   ? `<span>📍 ${escHtml(isp.comune)}</span>`   : ''}
-        ${isp.lunghezza ? `<span>📏 ${isp.lunghezza} m</span>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="display:flex;gap:12px;font-size:13px;color:var(--muted);flex-wrap:wrap;flex:1">
+          <span>📅 ${isp.data}</span>
+          <span>👤 ${escHtml(isp.ispettore)}</span>
+          ${isp.impianto ? `<span>🏭 ${escHtml(isp.impianto)}</span>` : ''}
+          ${isp.comune   ? `<span>📍 ${escHtml(isp.comune)}</span>`   : ''}
+          ${isp.lunghezza ? `<span>📏 ${isp.lunghezza} m</span>` : ''}
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="viewModificaIspezione()" style="font-size:11px;flex-shrink:0;margin-left:8px">✏️ Modifica</button>
       </div>
       ${isp.note_gen ? `<div style="margin-top:8px;font-size:13px;color:var(--muted)">${escHtml(isp.note_gen)}</div>` : ''}
       <div style="margin-top:10px">
@@ -762,7 +775,7 @@ function viewIspezione() {
         ${!isp.lunghezza ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Inserisci la lunghezza opera per calcolare l'avanzamento</div>` : ''}
       </div>
       ${isp.stazioni.length > 0 ? `
-      <div class="summary-grid" style="margin-top:12px">
+      <div class="summary-grid" style="margin-top:12px;grid-template-columns:repeat(6,1fr)">
         ${[5,4,3,2,1].map(v => {
           const colors = {5:['var(--good-bg)','var(--good)'],4:['var(--ok-bg)','var(--ok)'],3:['var(--att-bg)','var(--att)'],2:['var(--bad-bg)','var(--bad)'],1:['var(--crit-bg)','var(--crit)']};
           return `<div class="summary-cell" style="background:${colors[v][0]};color:${colors[v][1]}">
@@ -770,6 +783,10 @@ function viewIspezione() {
             <div class="lbl">CHS ${v}</div>
           </div>`;
         }).join("")}
+        <div class="summary-cell" style="background:var(--accent-light);color:var(--accent)">
+          <div class="num">${isp.stazioni.length}</div>
+          <div class="lbl">Stazioni</div>
+        </div>
       </div>` : ''}
     </div>
 
@@ -798,6 +815,65 @@ async function _eliminaIspezione() {
     toast("Ispezione eliminata");
     viewHome();
   });
+}
+
+// ─── MODIFICA CAMPI GENERALI ISPEZIONE ────────────────────────────────────────
+function viewModificaIspezione() {
+  const isp = db.ispezioni[S.ispezioneId];
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+      <h1>Modifica ispezione</h1>
+    </div>
+    <div class="card">
+      <div class="form-group">
+        <label class="form-label">Opera</label>
+        <input type="text" id="edit-opera" value="${escHtml(isp.opera)}" placeholder="Es. Opera">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Impianto</label>
+        <input type="text" id="edit-impianto" value="${escHtml(isp.impianto||'')}" placeholder="Es. Impianto">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ispettore</label>
+        <input type="text" id="edit-ispettore" value="${escHtml(isp.ispettore)}" placeholder="Nome e cognome">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Comune</label>
+        <input type="text" id="edit-comune" value="${escHtml(isp.comune||'')}" placeholder="Es. Comune">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Data ispezione</label>
+        <input type="date" id="edit-data" value="${isp.data}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Lunghezza opera (m)</label>
+        <input type="number" id="edit-lunghezza" value="${isp.lunghezza||''}" placeholder="Es. 4100" min="0" step="1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note generali</label>
+        <textarea id="edit-note_gen" placeholder="Descrizione, accesso, condizioni meteo…">${escHtml(isp.note_gen||'')}</textarea>
+      </div>
+      <button class="btn btn-primary btn-block" onclick="salvaModificaIspezione()">✓ Salva modifiche</button>
+    </div>
+  `);
+}
+
+async function salvaModificaIspezione() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const opera     = document.getElementById("edit-opera").value.trim();
+  const ispettore = document.getElementById("edit-ispettore").value.trim();
+  if (!opera || !ispettore) { toast("⚠ Opera e ispettore obbligatori"); return; }
+  isp.opera     = opera;
+  isp.impianto  = document.getElementById("edit-impianto").value.trim();
+  isp.ispettore = ispettore;
+  isp.comune    = document.getElementById("edit-comune").value.trim();
+  isp.data      = document.getElementById("edit-data").value;
+  isp.lunghezza = parseInt(document.getElementById("edit-lunghezza").value) || null;
+  isp.note_gen  = document.getElementById("edit-note_gen").value.trim();
+  await salvaIspezione(isp);
+  toast("✓ Ispezione aggiornata");
+  viewIspezione();
 }
 
 // ─── PROGRESSIVE (metri interi) ──────────────────────────────────────────────
@@ -842,7 +918,7 @@ function esportaJSON()             { _esportaJSON().catch(e => toast("⚠ " + e.
 function esportaTutteJSON()        { _esportaTutteJSON().catch(e => toast("⚠ " + e.message)); }
 function esportaReport()           { _esportaReport().catch(e => toast("⚠ " + e.message)); }
 function setCHSGen(val)            { setCHSGenAsync(val).catch(e => toast("⚠ " + e.message)); }
-function salvaElementi()           { salvaElementiAsync().catch(e => toast("⚠ " + e.message)); }
+function salvaElementi(primaStazione)    { salvaElementiAsync(primaStazione).catch(e => toast("⚠ " + e.message)); }
 function viewStazione()            { viewStazioneAsync().catch(e => toast("⚠ " + e.message)); }
 function trascriviStazione()       { _trascriviStazione().catch(e => toast("⚠ " + e.message)); }
 function trascriviTutto()          { _trascriviTutto().catch(e => toast("⚠ " + e.message)); }
@@ -863,7 +939,30 @@ async function _viewNuovaStazione() {
   isp.stazioni.push(stazione);
   await salvaIspezione(isp);
   S.stazioneId = isp.stazioni.length - 1;
-  viewStazione();
+
+  // Se è la prima stazione, apri prima la pagina di configurazione elementi
+  if (isp.stazioni.length === 1) {
+    viewModificaElementi(true); // true = modalità "prima stazione"
+  } else {
+    // Applica elementi default personalizzati se presenti
+    if (isp._elementiDefault) {
+      const s = getStazione();
+      const nuovi = {};
+      isp._elementiDefault.forEach(nome => {
+        nuovi[nome] = { chs: null, note: '', foto: [], audio: [] };
+      });
+      s.elementi = nuovi;
+      await salvaIspezione(isp);
+    }
+    viewStazione();
+  }
+}
+
+function annullaConfigurazione() {
+  // Rimuovi la stazione appena creata e torna all'ispezione
+  const isp = db.ispezioni[S.ispezioneId];
+  isp.stazioni.splice(S.stazioneId, 1);
+  salvaIspezione(isp).then(() => viewIspezione());
 }
 
 // ─── STAZIONE ────────────────────────────────────────────────────────────────
@@ -957,6 +1056,12 @@ async function viewStazioneAsync() {
     </div>`;
   }).join("");
 
+  // Calcola indici prev/next nell'ordine delle stazioni ordinate
+  const ordinate = stazioniOrdinate(isp);
+  const posInOrdine = ordinate.findIndex(x => x.originalIdx === S.stazioneId);
+  const prevOrigIdx = posInOrdine > 0 ? ordinate[posInOrdine - 1].originalIdx : null;
+  const nextOrigIdx = posInOrdine < ordinate.length - 1 ? ordinate[posInOrdine + 1].originalIdx : null;
+
   render(`
     <div class="page-header">
       <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
@@ -970,6 +1075,10 @@ async function viewStazioneAsync() {
           min="0" step="1">
         <span style="font-size:13px;color:var(--muted)">m</span>
       </div>
+      <button class="btn btn-outline btn-sm" onclick="apriStazione(${prevOrigIdx})"
+        ${prevOrigIdx === null ? 'disabled' : ''} title="Stazione precedente" style="padding:5px 9px">‹</button>
+      <button class="btn btn-outline btn-sm" onclick="apriStazione(${nextOrigIdx})"
+        ${nextOrigIdx === null ? 'disabled' : ''} title="Stazione successiva" style="padding:5px 9px">›</button>
       <button class="btn btn-primary btn-sm" onclick="viewNuovaStazione()">+ Nuova</button>
     </div>
 
@@ -1047,7 +1156,7 @@ async function setCHSGenAsync(val) {
 }
 
 // ─── MODIFICA ELEMENTI STAZIONE ───────────────────────────────────────────────
-function viewModificaElementi() {
+function viewModificaElementi(primaStazione) {
   const s = getStazione();
   const nomi = Object.keys(s.elementi);
 
@@ -1064,19 +1173,30 @@ function viewModificaElementi() {
     </div>`;
   }).join('');
 
+  const titoloHeader = primaStazione
+    ? 'Configura elementi'
+    : 'Modifica elementi';
+  const sottotitoloHtml = primaStazione
+    ? `<div style="font-size:13px;color:var(--muted);margin-bottom:14px">
+         Definisci gli elementi per questa ispezione. La stessa lista sarà proposta come default per le stazioni successive.
+       </div>`
+    : '';
+  const btnLabel = primaStazione ? 'Conferma e vai alla stazione' : '✓ Salva';
+
   render(`
     <div class="page-header">
-      <button class="back-btn" onclick="viewStazione()">← Indietro</button>
-      <h1>Modifica elementi</h1>
+      <button class="back-btn" onclick="${primaStazione ? 'annullaConfigurazione()' : 'viewStazione()'}">← Indietro</button>
+      <h1>${titoloHeader}</h1>
     </div>
     <div class="card">
+      ${sottotitoloHtml}
       <div id="elem-edit-list">${righe}</div>
       <button class="btn btn-outline btn-block" onclick="aggiungiElemento()" style="margin-top:4px">
         + Aggiungi elemento
       </button>
     </div>
-    <button class="btn btn-primary btn-block" onclick="salvaElementi()" style="margin-top:12px">
-      ✓ Salva
+    <button class="btn btn-primary btn-block" onclick="salvaElementi(${primaStazione ? 'true' : 'false'})" style="margin-top:12px">
+      ${btnLabel}
     </button>
   `);
 }
@@ -1108,21 +1228,20 @@ function rimuoviElemento(i, haDati) {
   }
 }
 
-async function salvaElementiAsync() {
+async function salvaElementiAsync(primaStazione) {
   const inputs = document.querySelectorAll('[id^="elem-name-"]');
   const nuoviNomi = [...inputs].map(inp => inp.value.trim()).filter(n => n);
   if (!nuoviNomi.length) { toast('⚠ Inserisci almeno un elemento'); return; }
 
+  const isp = db.ispezioni[S.ispezioneId];
   const s = getStazione();
   const vecchiNomi = Object.keys(s.elementi);
   const nuoviElementi = {};
 
   for (const nome of nuoviNomi) {
     if (vecchiNomi.includes(nome)) {
-      // Mantieni dati esistenti
       nuoviElementi[nome] = s.elementi[nome];
     } else {
-      // Nuovo elemento
       nuoviElementi[nome] = { chs: null, note: '', foto: [], audio: [] };
     }
   }
@@ -1136,7 +1255,13 @@ async function salvaElementiAsync() {
   }
 
   s.elementi = nuoviElementi;
-  await salvaIspezione(db.ispezioni[S.ispezioneId]);
+
+  // Se è la prima stazione, salva la lista come default per le successive
+  if (primaStazione) {
+    isp._elementiDefault = nuoviNomi;
+  }
+
+  await salvaIspezione(isp);
   toast('✓ Elementi aggiornati');
   viewStazione();
 }
