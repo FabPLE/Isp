@@ -1,4 +1,4 @@
-const CACHE_NAME = "ispezioni-v1";
+const CACHE_NAME = "ispezioni-v2";
 
 // file minimi da cache
 const ASSETS = [
