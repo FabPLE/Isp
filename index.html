@@ -702,7 +702,7 @@ function viewHome() {
     <div class="page-header">
       <div style="flex:1">
         <h1 style="margin-bottom:2px">EasyIS – Tool per Ispezioni</h1>
-        <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.0</div>
+        <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.01</div>
       </div>
       ${db.ispezioni.length ? `<button class="btn btn-sm btn-outline" onclick="esportaTutteJSON()">⬇ Esporta tutto</button>` : ''}
     </div>
@@ -790,13 +790,14 @@ function viewIspezione() {
     const totElementi = Object.keys(s.elementi).length;
     const chsNumerici = Object.values(s.elementi).map(e => e.chs).filter(c => c && c !== 'NA');
     const badgeChs = chsEffettivoStazione(s);
-    const progLabel = (s.progressiva !== null && s.progressiva !== undefined && s.progressiva !== '') ? escHtml(String(s.progressiva)) : '';
+    const progRel = (s.progressiva !== null && s.progressiva !== undefined && s.progressiva !== '') ? escHtml(String(s.progressiva)) : '–';
+    const hasAss = s.progressiva_ass !== null && s.progressiva_ass !== undefined;
     return `
     <div class="card" style="display:flex;align-items:center;gap:10px;cursor:default">
       <div style="flex:1;cursor:pointer" onclick="apriStazione(${originalIdx})">
         <div class="card-row">
           <div>
-            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${progLabel} m</div>
+            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${progRel} m${hasAss ? `<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:6px">(ass. ${escHtml(String(s.progressiva_ass))} m)</span>` : ''}</div>
             <div class="card-meta">${totElementi} elementi · ${chsNumerici.length} valutati</div>
           </div>
           ${chsBadge(badgeChs)}
@@ -1162,15 +1163,24 @@ async function viewStazioneAsync() {
   render(`
     <div class="page-header">
       <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
-      <div style="flex:1;display:flex;align-items:center;gap:6px">
-        <input type="number" id="prog-edit"
-          value="${s.progressiva}"
+      <div style="flex:1;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+        <button onclick="toggleSegnoProgressiva()" id="btn-segno"
+          style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;
+                 background:${s.progressiva < 0 ? 'var(--att-bg)' : 'var(--surface)'};
+                 color:${s.progressiva < 0 ? 'var(--att)' : 'var(--muted)'};
+                 border:1px solid var(--border);border-radius:6px;
+                 padding:3px 8px;cursor:pointer;min-width:32px;text-align:center"
+          title="Cambia segno">${s.progressiva < 0 ? '−' : '+'}</button>
+        <input type="text" inputmode="numeric" id="prog-edit"
+          value="${Math.abs(s.progressiva)}"
           style="font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;
                  border:none;border-bottom:2px solid var(--accent);background:transparent;
-                 width:90px;padding:2px 4px;outline:none;color:var(--text)"
-          onchange="setProgressiva(this.value)"
-          step="1">
-        <span style="font-size:13px;color:var(--muted)">m</span>
+                 width:72px;padding:2px 4px;outline:none;color:var(--text)"
+          onchange="setProgressiva((document.getElementById('btn-segno').textContent.trim()==='−'?'-':'')+this.value)">
+        <span style="font-size:13px;color:var(--muted)">m rel.</span>
+        ${s.progressiva_ass !== null && s.progressiva_ass !== undefined
+          ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--accent);font-weight:600;margin-left:4px">${s.progressiva_ass} m ass.</span>`
+          : ''}
       </div>
       <button class="btn btn-outline btn-sm" onclick="apriStazione(${prevOrigIdx})"
         ${prevOrigIdx === null ? 'disabled' : ''} title="Stazione precedente" style="padding:5px 9px">‹</button>
@@ -1375,72 +1385,51 @@ function viewConvertProgressive() {
 
   const ordinate = stazioniOrdinate(isp);
   const hasNeg = ordinate.some(({s}) => parseProgressiva(s.progressiva) < 0);
-
-  // Mostra tabella progressive correnti
-  const righe = ordinate.map(({s}, i) => {
-    const p = parseProgressiva(s.progressiva);
-    const isNeg = p !== null && p < 0;
-    return `<tr style="background:${isNeg ? 'var(--att-bg)' : 'transparent'}">
-      <td style="padding:5px 8px;font-family:'IBM Plex Mono',monospace;color:${isNeg?'var(--att)':'var(--text)'}">${p !== null ? p : '–'} m</td>
-      <td style="padding:5px 8px;font-size:12px;color:var(--muted)">${escHtml(s.note_gen||'').slice(0,40)}</td>
-    </tr>`;
-  }).join('');
+  const hasAss = ordinate.some(({s}) => s.progressiva_ass !== null && s.progressiva_ass !== undefined);
 
   // Costruisci opzioni per la stazione 0 assoluta
   const opzioniStaz = ordinate.map(({s}, i) => {
     const p = parseProgressiva(s.progressiva);
-    return `<option value="${i}">${p !== null ? p : '–'} m${s.note_gen ? ' – ' + s.note_gen.slice(0,30) : ''}</option>`;
+    return `<option value="${i}">${p !== null ? p : '–'} m rel.${s.note_gen ? ' – ' + s.note_gen.slice(0,25) : ''}</option>`;
   }).join('');
 
   render(`
     <div class="page-header">
       <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
-      <h1>Converti progressive</h1>
+      <h1>Progressive assolute</h1>
     </div>
 
     <div class="card" style="margin-bottom:12px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Progressive attuali</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-        ${hasNeg
-          ? '⚠ Sono presenti progressive negative (evidenziate). Puoi scegliere quale stazione corrisponde alla progressiva 0 assoluta e ricalcolare tutto.'
-          : 'Le progressive attuali. Seleziona la stazione che deve diventare la progressiva 0 assoluta per ricalcolare tutte le quote.'}
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Come funziona</div>
+      <div style="font-size:13px;color:var(--muted);line-height:1.5">
+        Le <strong>progressive relative</strong> (inserite sul campo) vengono conservate intatte.
+        Il convertitore calcola le <strong>progressive assolute</strong> sottraendo l'offset della stazione scelta come origine,
+        e le salva separatamente. Puoi rieseguire la conversione in qualsiasi momento.
+        ${hasNeg ? '<div style="margin-top:6px;color:var(--att)">⚠ Sono presenti progressive relative negative.</div>' : ''}
+        ${hasAss ? '<div style="margin-top:6px;color:var(--accent)">ℹ Le progressive assolute esistenti verranno sovrascritte.</div>' : ''}
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="border-bottom:1px solid var(--border)">
-          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted)">Progressiva</th>
-          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted)">Note</th>
-        </tr></thead>
-        <tbody>${righe}</tbody>
-      </table>
     </div>
 
     <div class="card">
       <div class="form-group">
-        <label class="form-label">Stazione che è la progressiva 0 assoluta</label>
+        <label class="form-label">Stazione = progressiva 0 assoluta</label>
         <select id="staz-zero-select">
           ${opzioniStaz}
         </select>
         <div style="font-size:12px;color:var(--muted);margin-top:4px">
-          Tutte le progressive verranno ricalcolate sottraendo il valore di questa stazione.
-        </div>
-      </div>
-      <div class="form-group" style="margin-top:4px">
-        <label class="form-label">Progressive immesse (relative a quale riferimento?)</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="ref-type" onchange="aggiornaPreviewConversione()" style="flex:1">
-            <option value="auto">Usa le progressive attuali come relative</option>
-            <option value="manual">Inserisci manualmente le progressive relative</option>
-          </select>
+          Tutte le progressive assolute = progressiva relativa − offset di questa stazione.
         </div>
       </div>
       <div id="preview-conversione" style="margin-top:8px"></div>
       <button class="btn btn-primary btn-block" onclick="applicaConvertProgressive()" style="margin-top:12px">
-        ✓ Applica conversione
+        ✓ Calcola e salva progressive assolute
       </button>
+      ${hasAss ? `<button class="btn btn-danger btn-block" onclick="cancellaProgressiveAssolute()" style="margin-top:8px;font-size:13px">
+        🗑 Rimuovi tutte le progressive assolute
+      </button>` : ''}
     </div>
   `);
 
-  // Pre-seleziona la stazione con progressiva minima (probabile punto di ingresso)
   const sel = document.getElementById('staz-zero-select');
   const minIdx = ordinate.reduce((mi, {s}, i) => {
     const p = parseProgressiva(s.progressiva);
@@ -1462,18 +1451,24 @@ function aggiornaPreviewConversione() {
   const offset = parseProgressiva(stazZero.s.progressiva) || 0;
 
   const righe = ordinate.map(({s}, i) => {
-    const p = parseProgressiva(s.progressiva);
-    const pAss = p !== null ? p - offset : null;
+    const pRel = parseProgressiva(s.progressiva);
+    const pAss = pRel !== null ? pRel - offset : null;
     const isZero = i === zeroIdx;
+    const assColor = isZero ? 'var(--accent)' : (pAss !== null && pAss < 0 ? 'var(--att)' : 'var(--text)');
+    const existingAss = s.progressiva_ass !== null && s.progressiva_ass !== undefined;
+    const cambio = existingAss && s.progressiva_ass !== pAss
+      ? `<span style="color:var(--muted);font-weight:400"> (era ${s.progressiva_ass})</span>` : '';
     return `<tr style="background:${isZero ? 'var(--accent-light)' : 'transparent'}">
-      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted)">${p !== null ? p : '–'} m</td>
-      <td style="padding:4px 6px;font-size:16px;color:var(--muted)">→</td>
-      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${isZero?'var(--accent)':pAss<0?'var(--att)':'var(--text)'}">${pAss !== null ? pAss : '–'} m${isZero?' (0 assoluto)':''}</td>
+      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted)">${pRel !== null ? pRel : '–'} m</td>
+      <td style="padding:4px 6px;font-size:14px;color:var(--muted)">→</td>
+      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${assColor}">
+        ${pAss !== null ? pAss : '–'} m${isZero ? ' ✦' : ''}${cambio}
+      </td>
     </tr>`;
   }).join('');
 
   document.getElementById('preview-conversione').innerHTML = `
-    <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Anteprima conversione</div>
+    <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Anteprima (offset = ${offset} m)</div>
     <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead><tr style="border-bottom:1px solid var(--border)">
         <th style="text-align:left;padding:3px 6px;font-size:10px;color:var(--muted)">Relativa</th>
@@ -1493,15 +1488,23 @@ async function applicaConvertProgressive() {
   const stazZero = ordinate[zeroIdx];
   const offset = parseProgressiva(stazZero.s.progressiva) || 0;
 
-  if (offset === 0) { toast("⚠ La stazione selezionata ha già progressiva 0, nessuna modifica necessaria"); return; }
-
   for (const {s} of ordinate) {
     const p = parseProgressiva(s.progressiva);
-    if (p !== null) s.progressiva = p - offset;
+    s.progressiva_ass = p !== null ? p - offset : null;
   }
 
   await salvaIspezione(isp);
-  toast("✓ Progressive convertite in assolute");
+  toast("✓ Progressive assolute salvate");
+  viewIspezione();
+}
+
+async function cancellaProgressiveAssolute() {
+  const isp = db.ispezioni[S.ispezioneId];
+  for (const s of isp.stazioni) {
+    delete s.progressiva_ass;
+  }
+  await salvaIspezione(isp);
+  toast("✓ Progressive assolute rimosse");
   viewIspezione();
 }
 
@@ -1752,6 +1755,18 @@ function getElemento(ei) {
   const s = getStazione();
   const nome = Object.keys(s.elementi)[ei];
   return s.elementi[nome];
+}
+
+function toggleSegnoProgressiva() {
+  const btn = document.getElementById('btn-segno');
+  const input = document.getElementById('prog-edit');
+  if (!btn || !input) return;
+  const isNeg = btn.textContent.trim() === '−';
+  btn.textContent = isNeg ? '+' : '−';
+  btn.style.background = isNeg ? 'var(--surface)' : 'var(--att-bg)';
+  btn.style.color = isNeg ? 'var(--muted)' : 'var(--att)';
+  const val = (isNeg ? '' : '-') + (input.value || '0');
+  setProgressiva(val);
 }
 
 async function setProgressiva(val) {
@@ -2033,11 +2048,16 @@ async function _esportaTutteJSON() {
 
 function esportaCSV() {
   const isp = db.ispezioni[S.ispezioneId];
-  let csv = "Progressiva;Elemento;CHS;Note\n";
+  const hasAss = isp.stazioni.some(s => s.progressiva_ass !== null && s.progressiva_ass !== undefined);
+  let csv = hasAss ? "Prog.Relativa;Prog.Assoluta;Elemento;CHS;Note\n" : "Progressiva;Elemento;CHS;Note\n";
   isp.stazioni.forEach(s => {
     Object.keys(s.elementi).forEach(nome => {
       const e = s.elementi[nome];
-      csv += `"${s.progressiva}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+      if (hasAss) {
+        csv += `"${s.progressiva}";"${s.progressiva_ass ?? ''}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+      } else {
+        csv += `"${s.progressiva}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+      }
     });
   });
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -2083,7 +2103,7 @@ async function _esportaReport() {
   </div>`;
 
   for (const s of stazioniOrdinate(isp).map(x=>x.s)) {
-    html += `<div class="stazione"><div class="st-title">Stazione ${s.progressiva}</div>`;
+    html += `<div class="stazione"><div class="st-title">Stazione ${s.progressiva} m rel.${s.progressiva_ass !== null && s.progressiva_ass !== undefined ? ` · ${s.progressiva_ass} m ass.` : ''}</div>`;
     for (const nome of Object.keys(s.elementi)) {
       const e = s.elementi[nome];
       const col = e.chs ? chsColors[e.chs] : '#888';
