@@ -700,7 +700,10 @@ function viewHome() {
 
   render(`
     <div class="page-header">
-      <h1>EasyIS – Tool per Ispezioni</h1>
+      <div style="flex:1">
+        <h1 style="margin-bottom:2px">EasyIS – Tool per Ispezioni</h1>
+        <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.0</div>
+      </div>
       ${db.ispezioni.length ? `<button class="btn btn-sm btn-outline" onclick="esportaTutteJSON()">⬇ Esporta tutto</button>` : ''}
     </div>
     <button class="btn btn-primary btn-block" onclick="viewNuovaIspezione()" style="margin-bottom:16px">
@@ -787,7 +790,7 @@ function viewIspezione() {
     const totElementi = Object.keys(s.elementi).length;
     const chsNumerici = Object.values(s.elementi).map(e => e.chs).filter(c => c && c !== 'NA');
     const badgeChs = chsEffettivoStazione(s);
-    const progLabel = (s.progressiva === 0 || s.progressiva === '0') ? '0' : escHtml(String(s.progressiva || ''));
+    const progLabel = (s.progressiva !== null && s.progressiva !== undefined && s.progressiva !== '') ? escHtml(String(s.progressiva)) : '';
     return `
     <div class="card" style="display:flex;align-items:center;gap:10px;cursor:default">
       <div style="flex:1;cursor:pointer" onclick="apriStazione(${originalIdx})">
@@ -865,7 +868,10 @@ function viewIspezione() {
 
     ${stList}
 
-    <div style="margin-top:16px">
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-outline btn-block" onclick="viewConvertProgressive()" style="font-size:13px">
+        📐 Converti progressive relative → assolute
+      </button>
       <button class="btn btn-danger btn-block" onclick="eliminaIspezione()">Elimina ispezione</button>
     </div>
   `);
@@ -947,7 +953,7 @@ async function salvaModificaIspezione() {
 
 // ─── PROGRESSIVE (metri interi) ──────────────────────────────────────────────
 function parseProgressiva(s) {
-  if (!s && s !== 0) return null;
+  if (s === null || s === undefined || s === '') return null;
   const n = parseInt(String(s).trim());
   return isNaN(n) ? null : n;
 }
@@ -960,8 +966,12 @@ function stazioniOrdinate(ispezione) {
 
 function completionPercent(ispezione) {
   if (!ispezione.stazioni.length || !ispezione.lunghezza) return 0;
-  const maxM = Math.max(...ispezione.stazioni.map(s => parseProgressiva(s.progressiva) ?? 0));
-  return Math.min(100, Math.round(maxM / ispezione.lunghezza * 100));
+  const vals = ispezione.stazioni.map(s => parseProgressiva(s.progressiva)).filter(v => v !== null);
+  if (!vals.length) return 0;
+  const maxM = Math.max(...vals);
+  const minM = Math.min(...vals);
+  const range = maxM - minM;
+  return Math.min(100, Math.round(range / ispezione.lunghezza * 100));
 }
 
 // ─── ELEMENTI DEFAULT ─────────────────────────────────────────────────────────
@@ -1159,7 +1169,7 @@ async function viewStazioneAsync() {
                  border:none;border-bottom:2px solid var(--accent);background:transparent;
                  width:90px;padding:2px 4px;outline:none;color:var(--text)"
           onchange="setProgressiva(this.value)"
-          min="0" step="1">
+          step="1">
         <span style="font-size:13px;color:var(--muted)">m</span>
       </div>
       <button class="btn btn-outline btn-sm" onclick="apriStazione(${prevOrigIdx})"
@@ -1357,6 +1367,143 @@ async function salvaElementiAsync(primaStazione) {
 // ─── WHISPER OFFLINE ──────────────────────────────────────────────────────────
 // Modello: whisper-small (~180MB, download una volta sola, poi offline via Cache API)
 // Accuratezza superiore a tiny, specialmente per l'italiano.
+
+// ─── CONVERSIONE PROGRESSIVE RELATIVE → ASSOLUTE ────────────────────────────
+function viewConvertProgressive() {
+  const isp = db.ispezioni[S.ispezioneId];
+  if (!isp.stazioni.length) { toast("⚠ Nessuna stazione da convertire"); return; }
+
+  const ordinate = stazioniOrdinate(isp);
+  const hasNeg = ordinate.some(({s}) => parseProgressiva(s.progressiva) < 0);
+
+  // Mostra tabella progressive correnti
+  const righe = ordinate.map(({s}, i) => {
+    const p = parseProgressiva(s.progressiva);
+    const isNeg = p !== null && p < 0;
+    return `<tr style="background:${isNeg ? 'var(--att-bg)' : 'transparent'}">
+      <td style="padding:5px 8px;font-family:'IBM Plex Mono',monospace;color:${isNeg?'var(--att)':'var(--text)'}">${p !== null ? p : '–'} m</td>
+      <td style="padding:5px 8px;font-size:12px;color:var(--muted)">${escHtml(s.note_gen||'').slice(0,40)}</td>
+    </tr>`;
+  }).join('');
+
+  // Costruisci opzioni per la stazione 0 assoluta
+  const opzioniStaz = ordinate.map(({s}, i) => {
+    const p = parseProgressiva(s.progressiva);
+    return `<option value="${i}">${p !== null ? p : '–'} m${s.note_gen ? ' – ' + s.note_gen.slice(0,30) : ''}</option>`;
+  }).join('');
+
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+      <h1>Converti progressive</h1>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Progressive attuali</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+        ${hasNeg
+          ? '⚠ Sono presenti progressive negative (evidenziate). Puoi scegliere quale stazione corrisponde alla progressiva 0 assoluta e ricalcolare tutto.'
+          : 'Le progressive attuali. Seleziona la stazione che deve diventare la progressiva 0 assoluta per ricalcolare tutte le quote.'}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted)">Progressiva</th>
+          <th style="text-align:left;padding:4px 8px;font-size:11px;color:var(--muted)">Note</th>
+        </tr></thead>
+        <tbody>${righe}</tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="form-group">
+        <label class="form-label">Stazione che è la progressiva 0 assoluta</label>
+        <select id="staz-zero-select">
+          ${opzioniStaz}
+        </select>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">
+          Tutte le progressive verranno ricalcolate sottraendo il valore di questa stazione.
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:4px">
+        <label class="form-label">Progressive immesse (relative a quale riferimento?)</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="ref-type" onchange="aggiornaPreviewConversione()" style="flex:1">
+            <option value="auto">Usa le progressive attuali come relative</option>
+            <option value="manual">Inserisci manualmente le progressive relative</option>
+          </select>
+        </div>
+      </div>
+      <div id="preview-conversione" style="margin-top:8px"></div>
+      <button class="btn btn-primary btn-block" onclick="applicaConvertProgressive()" style="margin-top:12px">
+        ✓ Applica conversione
+      </button>
+    </div>
+  `);
+
+  // Pre-seleziona la stazione con progressiva minima (probabile punto di ingresso)
+  const sel = document.getElementById('staz-zero-select');
+  const minIdx = ordinate.reduce((mi, {s}, i) => {
+    const p = parseProgressiva(s.progressiva);
+    const pm = parseProgressiva(ordinate[mi].s.progressiva);
+    return (p !== null && (pm === null || p < pm)) ? i : mi;
+  }, 0);
+  sel.selectedIndex = minIdx;
+  aggiornaPreviewConversione();
+  sel.addEventListener('change', aggiornaPreviewConversione);
+}
+
+function aggiornaPreviewConversione() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const ordinate = stazioniOrdinate(isp);
+  const sel = document.getElementById('staz-zero-select');
+  if (!sel) return;
+  const zeroIdx = parseInt(sel.value);
+  const stazZero = ordinate[zeroIdx];
+  const offset = parseProgressiva(stazZero.s.progressiva) || 0;
+
+  const righe = ordinate.map(({s}, i) => {
+    const p = parseProgressiva(s.progressiva);
+    const pAss = p !== null ? p - offset : null;
+    const isZero = i === zeroIdx;
+    return `<tr style="background:${isZero ? 'var(--accent-light)' : 'transparent'}">
+      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted)">${p !== null ? p : '–'} m</td>
+      <td style="padding:4px 6px;font-size:16px;color:var(--muted)">→</td>
+      <td style="padding:4px 6px;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${isZero?'var(--accent)':pAss<0?'var(--att)':'var(--text)'}">${pAss !== null ? pAss : '–'} m${isZero?' (0 assoluto)':''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('preview-conversione').innerHTML = `
+    <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Anteprima conversione</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="text-align:left;padding:3px 6px;font-size:10px;color:var(--muted)">Relativa</th>
+        <th></th>
+        <th style="text-align:left;padding:3px 6px;font-size:10px;color:var(--muted)">Assoluta</th>
+      </tr></thead>
+      <tbody>${righe}</tbody>
+    </table>`;
+}
+
+async function applicaConvertProgressive() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const ordinate = stazioniOrdinate(isp);
+  const sel = document.getElementById('staz-zero-select');
+  if (!sel) return;
+  const zeroIdx = parseInt(sel.value);
+  const stazZero = ordinate[zeroIdx];
+  const offset = parseProgressiva(stazZero.s.progressiva) || 0;
+
+  if (offset === 0) { toast("⚠ La stazione selezionata ha già progressiva 0, nessuna modifica necessaria"); return; }
+
+  for (const {s} of ordinate) {
+    const p = parseProgressiva(s.progressiva);
+    if (p !== null) s.progressiva = p - offset;
+  }
+
+  await salvaIspezione(isp);
+  toast("✓ Progressive convertite in assolute");
+  viewIspezione();
+}
 
 let _whisperPipe    = null;
 let _whisperLoading = false;
@@ -1609,7 +1756,7 @@ function getElemento(ei) {
 
 async function setProgressiva(val) {
   const n = parseInt(val);
-  if (isNaN(n) || n < 0) { toast("⚠ Progressiva non valida"); return; }
+  if (isNaN(n)) { toast("⚠ Progressiva non valida"); return; }
   getStazione().progressiva = n;
   await salvaIspezione(db.ispezioni[S.ispezioneId]);
 }
