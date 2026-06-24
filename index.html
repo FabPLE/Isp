@@ -422,11 +422,45 @@ const FOTO_PRESET = {
   originale:  { label: 'Originale',     max: null, q: null  },
 };
 function getFotoPreset() {
-  return FOTO_PRESET[localStorage.getItem('fotoQualita') || 'bilanciata'];
+  // Legge la qualità dall'ispezione corrente (se aperta), altrimenti bilanciata
+  if (S.ispezioneId !== null && db.ispezioni[S.ispezioneId]) {
+    const k = db.ispezioni[S.ispezioneId].fotoQualita || 'bilanciata';
+    return FOTO_PRESET[k] || FOTO_PRESET['bilanciata'];
+  }
+  return FOTO_PRESET['bilanciata'];
 }
-function setFotoQualita(key) {
-  localStorage.setItem('fotoQualita', key);
-  viewHome();
+
+// Genera le righe della tabella qualità (usata nel form nuova ispezione)
+function _qualitaTableRows(selezionata) {
+  return [
+    ['alta',       'Alta qualità',        'max 2400px', '92%',       '~800KB/foto · per ispezioni importanti'],
+    ['bilanciata', 'Bilanciata (default)', 'max 1200px', '85%',       '~200KB/foto · uso quotidiano'],
+    ['compressa',  'Compressa',            'max 800px',  '75%',       '~80KB/foto · ispezioni lunghe'],
+    ['originale',  'Originale',            'originale',  'originale', 'file salvato senza alcuna modifica · max 50MB'],
+  ].map(([k, label, res, q, note]) => {
+    const attivo = selezionata === k;
+    return `<tr style="background:${attivo?'rgba(59,130,246,0.08)':'transparent'};border-bottom:1px solid var(--border)">
+      <td style="padding:5px 6px;font-weight:${attivo?'700':'400'};color:${attivo?'var(--primary)':'var(--text)'}">${attivo?'→ ':''}${label}</td>
+      <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${res}</td>
+      <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${q}</td>
+      <td style="padding:5px 6px;color:var(--muted)">${note}</td>
+    </tr>`;
+  }).join('');
+}
+
+// Aggiorna i pulsanti e la tabella nel form nuova ispezione
+function selezionaQualita(k) {
+  document.querySelectorAll('[id^="qbtn-"]').forEach(btn => {
+    const bk = btn.id.replace('qbtn-','');
+    const attivo = bk === k;
+    btn.style.border = `2px solid ${attivo ? 'var(--primary)' : 'var(--border)'}`;
+    btn.style.background = attivo ? '#e8f0fe' : 'var(--bg)';
+    btn.style.color = attivo ? '#1a56db' : 'var(--text)';
+    btn.style.fontWeight = attivo ? '700' : '400';
+    btn.textContent = (attivo ? '✓ ' : '') + FOTO_PRESET[bk].label;
+  });
+  const tb = document.getElementById('qualita-table');
+  if (tb) tb.innerHTML = _qualitaTableRows(k);
 }
 
 // Comprime (o lascia originale) una foto e restituisce un Blob
@@ -748,55 +782,28 @@ function viewHome() {
         <h1 style="margin-bottom:2px">EasyIS – Tool per Ispezioni</h1>
         <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.02</div>
       </div>
-      ${db.ispezioni.length ? `<button class="btn btn-sm btn-outline" onclick="esportaTutteJSON()">⬇ Esporta tutto</button>` : ''}
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-sm btn-outline" onclick="viewGuida()" title="Guida">?</button>
+        ${db.ispezioni.length ? `<button class="btn btn-sm btn-outline" onclick="esportaTutteJSON()">⬇ Esporta tutto</button>` : ''}
+      </div>
     </div>
-    <div id="storage-bar" style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px">
+    <div id="storage-bar" style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:4px;font-size:12px;color:var(--muted);display:flex;align-items:center;gap:10px">
       <span>💾 Memoria:</span>
       <div style="flex:1;background:var(--border);border-radius:4px;height:6px;overflow:hidden">
         <div id="storage-fill" style="height:100%;border-radius:4px;background:var(--primary);width:0%;transition:width .4s"></div>
       </div>
       <span id="storage-label" style="white-space:nowrap;font-family:'IBM Plex Mono',monospace">…</span>
     </div>
-    <div style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
-      <div style="margin-bottom:10px;font-weight:600;color:var(--text);font-size:13px">📷 Qualità foto</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-        ${Object.entries(FOTO_PRESET).map(([k,v]) => {
-          const attivo = (localStorage.getItem('fotoQualita')||'bilanciata') === k;
-          return `<button onclick="setFotoQualita('${k}')" style="padding:7px 13px;border-radius:7px;border:2px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'#e8f0fe':'var(--bg)'};color:${attivo?'#1a56db':'var(--text)'};font-size:12px;font-weight:${attivo?'700':'400'};cursor:pointer;box-shadow:${attivo?'0 2px 8px rgba(0,0,0,0.10)':'none'}">${attivo?'✓ ':''} ${v.label}</button>`;
-        }).join('')}
-      </div>
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
-            <th style="text-align:left;padding:4px 6px;font-weight:600">Modalità</th>
-            <th style="text-align:center;padding:4px 6px;font-weight:600">Risoluzione</th>
-            <th style="text-align:center;padding:4px 6px;font-weight:600">Qualità JPEG</th>
-            <th style="text-align:left;padding:4px 6px;font-weight:600">Note</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${[
-            ['alta',       'Alta qualità',       'max 2400px', '92%',       '~800KB/foto · per ispezioni importanti'],
-            ['bilanciata', 'Bilanciata (default)','max 1200px', '85%',       '~200KB/foto · uso quotidiano'],
-            ['compressa',  'Compressa',           'max 800px',  '75%',       '~80KB/foto · ispezioni lunghe'],
-            ['originale',  'Originale',           'originale',  'originale', 'file salvato senza alcuna modifica · max 50MB'],
-          ].map(([k, label, res, q, note]) => {
-            const attivo = (localStorage.getItem('fotoQualita')||'bilanciata') === k;
-            return `<tr style="background:${attivo?'rgba(var(--primary-rgb,59,130,246),0.08)':'transparent'};border-bottom:1px solid var(--border)">
-              <td style="padding:5px 6px;font-weight:${attivo?'700':'400'};color:${attivo?'var(--primary)':'var(--text)'}">
-                ${attivo?'→ ':''}${label}
-              </td>
-              <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${res}</td>
-              <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${q}</td>
-              <td style="padding:5px 6px;color:var(--muted)">${note}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
+    <div style="font-size:10px;color:var(--muted);padding:0 4px;margin-bottom:14px;line-height:1.5">
+      Il valore indica lo spazio usato da foto e audio salvati in questa app (IndexedDB del browser). La quota massima è stimata dal browser in base allo spazio libero sul dispositivo — non è la RAM né lo spazio disco totale. Il dato rilevante è lo spazio usato (il numeratore).
     </div>
-    <button class="btn btn-primary btn-block" onclick="viewNuovaIspezione()" style="margin-bottom:16px">
-      + Nuova ispezione
-    </button>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn btn-primary" style="flex:1" onclick="viewNuovaIspezione()">+ Nuova ispezione</button>
+      <label class="btn btn-outline" style="cursor:pointer;margin:0" title="Importa JSON">
+        ⬆ Importa
+        <input type="file" accept=".json" style="display:none" onchange="importaJSON(this)">
+      </label>
+    </div>
     ${list}
   `);
   // Aggiorna barra storage dopo il render
@@ -856,6 +863,28 @@ function viewNuovaIspezione() {
         <label class="form-label">Note generali</label>
         <textarea id="note_gen" placeholder="Descrizione, accesso, condizioni meteo…"></textarea>
       </div>
+      <div class="form-group">
+        <label class="form-label">📷 Qualità foto</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px" id="qualita-buttons">
+          ${Object.entries(FOTO_PRESET).map(([k,v]) => {
+            const attivo = k === 'bilanciata';
+            return `<button type="button" onclick="selezionaQualita('${k}')" id="qbtn-${k}" style="padding:7px 13px;border-radius:7px;border:2px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'#e8f0fe':'var(--bg)'};color:${attivo?'#1a56db':'var(--text)'};font-size:12px;font-weight:${attivo?'700':'400'};cursor:pointer">${attivo?'✓ ':''} ${v.label}</button>`;
+          }).join('')}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead>
+            <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:4px 6px;font-weight:600">Modalità</th>
+              <th style="text-align:center;padding:4px 6px;font-weight:600">Risoluzione</th>
+              <th style="text-align:center;padding:4px 6px;font-weight:600">Qualità JPEG</th>
+              <th style="text-align:left;padding:4px 6px;font-weight:600">Note</th>
+            </tr>
+          </thead>
+          <tbody id="qualita-table">
+            ${_qualitaTableRows('bilanciata')}
+          </tbody>
+        </table>
+      </div>
       <button class="btn btn-primary btn-block" onclick="creaIspezione()">Crea ispezione</button>
     </div>
   `);
@@ -865,6 +894,9 @@ async function _creaIspezione() {
   const opera     = document.getElementById("opera").value.trim();
   const ispettore = document.getElementById("ispettore").value.trim();
   if (!opera || !ispettore) { toast("⚠ Opera e ispettore obbligatori"); return; }
+  // Leggi la qualità selezionata dal pulsante attivo
+  const qBtn = [...document.querySelectorAll('[id^="qbtn-"]')].find(b => b.style.fontWeight === '700');
+  const fotoQualita = qBtn ? qBtn.id.replace('qbtn-','') : 'bilanciata';
   const isp = {
     id:       uuid(),
     opera,
@@ -875,6 +907,7 @@ async function _creaIspezione() {
     ora:      new Date().toTimeString().slice(0,5),
     lunghezza: parseInt(document.getElementById("lunghezza").value) || null,
     note_gen: document.getElementById("note_gen").value.trim(),
+    fotoQualita,
     stazioni: []
   };
   await salvaIspezione(isp);
@@ -917,7 +950,7 @@ function viewIspezione() {
     <div class="page-header">
       <button class="back-btn" onclick="viewHome()">← Home</button>
       <h1>${escHtml(isp.opera)}</h1>
-      <button class="btn btn-sm btn-outline" onclick="viewEsportaIspezione()">⬇</button>
+      <button class="btn btn-sm btn-outline" onclick="viewEsportaIspezione()">⬇ Esporta</button>
     </div>
 
     <div class="card" style="margin-bottom:14px">
@@ -2061,6 +2094,214 @@ function stopRec(ei) {
 function getSupportedMime() {
   const types = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'];
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+// ─── GUIDA ───────────────────────────────────────────────────────────────────
+function viewGuida() {
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewHome()">← Indietro</button>
+      <h1>Guida</h1>
+    </div>
+    <div class="card" style="font-size:13px;line-height:1.7;color:var(--text)">
+
+      <div style="font-size:15px;font-weight:700;margin-bottom:6px">EasyIS – Guida rapida</div>
+      <p style="color:var(--muted);margin-bottom:16px">EasyIS è uno strumento per condurre ispezioni in campo su opere civili (gallerie, ponti, viadotti, ecc.). Tutto funziona direttamente dal browser del telefono, senza installare nulla e senza connessione internet.</p>
+
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Come è organizzata un'ispezione</div>
+      <p style="margin-bottom:16px">Un'ispezione è composta da una serie di <b>stazioni</b>, ognuna delle quali corrisponde a un punto fisico lungo l'opera (identificato da una progressiva in metri). Per ogni stazione puoi rilevare uno o più <b>elementi</b> (es. rivestimento, soletta, piedritti) e per ciascuno assegnare il CHS, aggiungere note, foto e registrazioni audio.</p>
+
+      <div style="font-weight:700;margin-bottom:8px;color:var(--accent)">I passi principali</div>
+
+      <div style="margin-bottom:10px"><b>1. Crea una nuova ispezione</b><br>
+      Dalla home premi "+ Nuova ispezione". Inserisci i dati dell'opera (nome, impianto, ispettore, comune, data, lunghezza) e scegli la qualità con cui vuoi salvare le foto. Una volta creata, l'ispezione appare nella lista della home.</div>
+
+      <div style="margin-bottom:10px"><b>2. Aggiungi le stazioni</b><br>
+      Dentro l'ispezione premi "+ Nuova stazione". Inserisci la progressiva (la distanza in metri dal punto di riferimento), poi aggiungi gli elementi che vuoi rilevare scegliendo dalla lista predefinita.</div>
+
+      <div style="margin-bottom:10px"><b>3. Compila ogni elemento</b><br>
+      Per ogni elemento puoi assegnare il CHS su una scala da 1 a 5 (1 = Critico, 5 = Ottimo) oppure marcarlo come N/A se non applicabile. Puoi aggiungere note testuali, foto e audio direttamente dalla schermata della stazione.</div>
+
+      <div style="margin-bottom:10px"><b>4. Progressive assolute</b><br>
+      Se conosci la progressiva assoluta di una stazione di riferimento, puoi usare la funzione "Progressive assolute" per calcolare automaticamente le progressive assolute di tutte le stazioni a partire da quella relativa.</div>
+
+      <div style="margin-bottom:16px"><b>5. Esporta i dati</b><br>
+      Quando hai finito, dalla home puoi esportare tutte le ispezioni oppure, dall'interno di ogni ispezione, esportare solo quella specifica. Il file JSON contiene tutti i dati, le foto e gli audio. Conservalo come copia di sicurezza.</div>
+
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Il CHS e la percentuale di completamento</div>
+      <p style="margin-bottom:16px">Il CHS (Condition Health Score) è il giudizio di condizione assegnato a ciascun elemento rilevato, su una scala da 1 a 5: 1 significa Critico, 5 significa Ottimo. È possibile anche marcarlo come N/A quando l'elemento non è applicabile alla stazione in esame.<br><br>
+      Il CHS della stazione viene calcolato automaticamente prendendo il valore più basso tra tutti gli elementi rilevati: è il punto più critico a determinare il giudizio complessivo della stazione.<br><br>
+      La percentuale di completamento mostrata nella home indica quante stazioni hanno almeno un CHS assegnato rispetto al totale.</p>
+
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Qualità delle foto</div>
+      <p style="margin-bottom:4px">Al momento della creazione dell'ispezione puoi scegliere tra quattro modalità:</p>
+      <ul style="margin:0 0 16px 16px;padding:0">
+        <li><b>Alta qualità</b> – massima nitidezza, file più pesanti</li>
+        <li><b>Bilanciata</b> – buon equilibrio tra qualità e spazio occupato (consigliata)</li>
+        <li><b>Compressa</b> – file leggeri, utile per ispezioni molto lunghe</li>
+        <li><b>Originale</b> – il file viene salvato esattamente come esce dalla fotocamera, senza nessuna modifica</li>
+      </ul>
+
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Come vengono salvati i dati</div>
+      <p style="margin-bottom:10px">Quando scatti una foto o registri un audio, il file non viene caricato su internet e non viene salvato nella galleria del telefono. Viene conservato all'interno del browser stesso, in uno spazio di archiviazione riservato chiamato <b>IndexedDB</b>.</p>
+      <p style="margin-bottom:10px">Per capire di cosa si tratta, pensa al browser (Chrome, Safari, ecc.) non solo come a uno strumento per navigare su internet, ma anche come a un contenitore capace di ospitare piccole applicazioni con il proprio archivio dati. IndexedDB è proprio quell'archivio: uno spazio sul disco del dispositivo, gestito dal browser, separato dalla galleria fotografica e dagli altri file del telefono, e non accessibile da altre app.</p>
+      <p style="margin-bottom:10px">I dati salvati in questo archivio rimangono disponibili anche quando chiudi l'app o spegni il telefono, esattamente come i file normali. La differenza è che sono invisibili dal gestore file del dispositivo e appartengono esclusivamente a quel browser su quel dispositivo.</p>
+      <p style="margin-bottom:6px">Questo ha alcune conseguenze pratiche importanti:</p>
+      <ul style="margin:0 0 10px 16px;padding:0">
+        <li>Se apri l'app su un altro telefono o con un altro browser, non troverai le ispezioni salvate</li>
+        <li>Se cancelli i dati di navigazione del browser, le ispezioni vengono perse in modo irreversibile</li>
+        <li>Non è necessaria nessuna connessione internet per usare l'app</li>
+      </ul>
+      <p style="margin-bottom:16px;font-weight:600">Per questo motivo è fondamentale esportare regolarmente le ispezioni completate. Il file JSON prodotto dall'esportazione è l'unica copia dei dati che puoi conservare in modo sicuro, condividere o aprire su un altro dispositivo.</p>
+
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">La barra della memoria</div>
+      <p style="margin-bottom:0">La barra visibile nella home mostra quanto spazio stanno occupando foto e audio salvati nell'archivio del browser. Il numero a sinistra è quello che conta: è lo spazio effettivamente usato. Il numero a destra è la quota massima che il browser stima di poter concedere in base allo spazio libero sul dispositivo in quel momento — non è un limite fisso e può variare nel tempo.</p>
+
+    </div>
+  `);
+}
+
+// ─── IMPORTAZIONE JSON ────────────────────────────────────────────────────────
+let _importQueue = [];   // coda ispezioni da elaborare in caso di conflitti
+let _importIdx   = 0;
+
+function importaJSON(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onerror = () => toast('⚠ Errore lettura file');
+  r.onload = e => {
+    let data;
+    try { data = JSON.parse(e.target.result); } catch { toast('⚠ File JSON non valido'); return; }
+    // Supporta sia {ispezioni:[...]} che una singola ispezione {...}
+    const lista = Array.isArray(data.ispezioni) ? data.ispezioni : (data.id ? [data] : null);
+    if (!lista || lista.length === 0) { toast('⚠ Nessuna ispezione trovata nel file'); return; }
+    _importQueue = lista;
+    _importIdx   = 0;
+    _elaboraImportQueue();
+  };
+  r.readAsText(file);
+  input.value = '';  // reset input per permettere reimport dello stesso file
+}
+
+async function _elaboraImportQueue() {
+  if (_importIdx >= _importQueue.length) {
+    await _ricaricaDB();
+    viewHome();
+    toast(`✓ Importazione completata`);
+    return;
+  }
+  const isp = _importQueue[_importIdx];
+  // Cerca conflitto per ID
+  const esistente = db.ispezioni.find(i => i.id === isp.id);
+  if (esistente) {
+    // Mostra dialogo conflitto personalizzato
+    _mostraConflitto(isp, esistente);
+  } else {
+    await _salvaIspezioneImportata(isp);
+    _importIdx++;
+    _elaboraImportQueue();
+  }
+}
+
+function _mostraConflitto(isp, esistente) {
+  // Usa il modal esistente con tre opzioni via UI custom
+  const bd = document.getElementById('modal-backdrop');
+  document.getElementById('modal-title').textContent = 'Ispezione già presente';
+  document.getElementById('modal-body').textContent =
+    `"${isp.opera}" (${isp.data}) esiste già nell'app. Cosa vuoi fare?`;
+  // Sostituisce i pulsanti standard con tre opzioni
+  const footer = bd.querySelector('.modal-footer') || bd.querySelector('div:last-child');
+  bd.innerHTML = `
+    <div style="background:var(--surface);border-radius:14px;padding:24px;max-width:320px;width:90%;margin:auto;margin-top:20vh">
+      <div style="font-weight:700;font-size:15px;margin-bottom:8px">Ispezione già presente</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:20px">
+        "<b>${escHtml(isp.opera)}</b>" (${isp.data}) esiste già nell'app. Cosa vuoi fare?
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-primary" onclick="_risolviConflitto('sostituisci')">Sostituisci</button>
+        <button class="btn btn-outline" onclick="_risolviConflitto('mantieni')">Mantieni entrambe</button>
+        <button class="btn btn-outline" onclick="_risolviConflitto('salta')">Salta</button>
+      </div>
+    </div>`;
+  bd.classList.add('open');
+}
+
+async function _risolviConflitto(scelta) {
+  document.getElementById('modal-backdrop').classList.remove('open');
+  // Ripristina il modal originale (verrà ricreato al prossimo uso)
+  document.getElementById('modal-backdrop').innerHTML = `
+    <div style="background:var(--surface);border-radius:14px;padding:24px;max-width:320px;width:90%;margin:auto;margin-top:20vh">
+      <div id="modal-title" style="font-weight:700;font-size:15px;margin-bottom:8px"></div>
+      <div id="modal-body" style="font-size:13px;color:var(--muted);margin-bottom:20px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-outline" onclick="closeModal()">Annulla</button>
+        <button id="modal-confirm" class="btn btn-danger">Elimina</button>
+      </div>
+    </div>`;
+  // Riassocia listener
+  document.getElementById('modal-confirm').onclick = () => { const cb=_modalCb; closeModal(); if(cb)cb(); };
+
+  const isp = _importQueue[_importIdx];
+  if (scelta === 'sostituisci') {
+    const idx = db.ispezioni.findIndex(i => i.id === isp.id);
+    if (idx !== -1) { db.ispezioni[idx] = isp; await salvaIspezione(isp); }
+  } else if (scelta === 'mantieni') {
+    isp.id = uuid();  // nuovo ID per evitare conflitto
+    await _salvaIspezioneImportata(isp);
+  }
+  // 'salta' non fa nulla
+  _importIdx++;
+  _elaboraImportQueue();
+}
+
+async function _salvaIspezioneImportata(isp) {
+  // Ricostruisce i media base64 come Blob in IndexedDB
+  for (const s of (isp.stazioni || [])) {
+    for (const nome of Object.keys(s.elementi || {})) {
+      const el = s.elementi[nome];
+      el.foto  = await Promise.all((el.foto||[]).map(async f => {
+        if (!f) return null;
+        if (f.base64) {
+          const blob = await fetch(f.base64).then(r => r.blob());
+          const id   = await salvaMedia(isp.id, blob, 'foto');
+          return { id, didascalia: f.didascalia || '' };
+        }
+        return f;
+      }));
+      el.audio = await Promise.all((el.audio||[]).map(async a => {
+        if (!a) return null;
+        if (typeof a === 'string' && a.startsWith('data:')) {
+          const blob = await fetch(a).then(r => r.blob());
+          return salvaMedia(isp.id, blob, 'audio');
+        }
+        return a;
+      }));
+    }
+    s.audio    = await Promise.all((s.audio||[]).map(async a => {
+      if (!a) return null;
+      if (typeof a === 'string' && a.startsWith('data:')) {
+        const blob = await fetch(a).then(r => r.blob());
+        return salvaMedia(isp.id, blob, 'audio');
+      }
+      return a;
+    }));
+    s.foto_gen = await Promise.all((s.foto_gen||[]).map(async f => {
+      if (!f) return null;
+      if (f.base64) {
+        const blob = await fetch(f.base64).then(r => r.blob());
+        const id   = await salvaMedia(isp.id, blob, 'foto');
+        return { id, didascalia: f.didascalia || '' };
+      }
+      return f;
+    }));
+  }
+  db.ispezioni.push(isp);
+  await salvaIspezione(isp);
+}
+
+async function _ricaricaDB() {
+  db.ispezioni = await idbGetAll('ispezioni');
 }
 
 // ─── ESPORTAZIONE ────────────────────────────────────────────────────────────
