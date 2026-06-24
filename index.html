@@ -965,6 +965,13 @@ function viewIspezione() {
         <button class="btn btn-outline btn-sm" onclick="viewModificaIspezione()" style="font-size:11px;flex-shrink:0;margin-left:8px">✏️ Modifica</button>
       </div>
       ${isp.note_gen ? `<div style="margin-top:8px;font-size:13px;color:var(--muted)">${escHtml(isp.note_gen)}</div>` : ''}
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="font-size:12px;color:var(--muted)">
+          📷 ${FOTO_PRESET[isp.fotoQualita||'bilanciata'].label}
+          ${(() => { const {mista} = _fotoQualitaStats(isp); return mista ? `<span style="color:var(--att);font-weight:600;margin-left:4px">· qualità mista</span>` : ''; })()}
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="viewCambiaQualitaIspezione()" style="font-size:11px">Cambia</button>
+      </div>
       <div style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px">
           <span>Avanzamento${isp.lunghezza ? ` su ${isp.lunghezza} m` : ''}</span>
@@ -998,6 +1005,15 @@ function viewIspezione() {
               <div class="lbl">NA</div>
             </div>
           </div>
+          ${(() => {
+            const { counts, mista } = _fotoQualitaStats(isp);
+            if (!mista) return '';
+            const labels = { alta:'Alta qualità', bilanciata:'Bilanciata', compressa:'Compressa', originale:'Originale', sconosciuta:'Non classificata' };
+            const righe = Object.entries(counts).map(([k,n]) => `${labels[k]||k}: ${n} foto`).join(' · ');
+            return `<div style="margin-top:10px;padding:8px 10px;background:var(--att-bg);border-radius:7px;font-size:11px;color:var(--att);line-height:1.6">
+              <b>⚠ Qualità foto mista</b><br>${righe}
+            </div>`;
+          })()}
         </div>`;
       })() : ''}
     </div>
@@ -1932,7 +1948,8 @@ async function addFotoGen(event) {
     const id = await salvaMedia(isp.id, blob, "foto");
     const s = getStazione();
     if (!s.foto_gen) s.foto_gen = [];
-    s.foto_gen.push({ id, didascalia: '' });
+    const qualita = isp.fotoQualita || 'bilanciata';
+    s.foto_gen.push({ id, didascalia: '', qualita });
     await salvaIspezione(isp);
     viewStazione();
   } catch(e) { toast("⚠ " + e.message); }
@@ -2002,7 +2019,8 @@ async function addFoto(event, ei) {
     const blob = await comprimiFoto(file);
     const isp = db.ispezioni[S.ispezioneId];
     const id = await salvaMedia(isp.id, blob, "foto");
-    getElemento(ei).foto.push({ id, didascalia: '' });
+    const qualita = isp.fotoQualita || 'bilanciata';
+    getElemento(ei).foto.push({ id, didascalia: '', qualita });
     await salvaIspezione(isp);
     viewStazione();
   } catch(e) { toast("⚠ " + e.message); }
@@ -2096,7 +2114,67 @@ function getSupportedMime() {
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
 
-// ─── GUIDA ───────────────────────────────────────────────────────────────────
+// Analizza le qualità delle foto di un'ispezione, restituisce {counts, mista}
+function _fotoQualitaStats(isp) {
+  const counts = {};
+  for (const s of isp.stazioni) {
+    for (const f of (s.foto_gen || [])) {
+      if (f && f.qualita) counts[f.qualita] = (counts[f.qualita] || 0) + 1;
+      else if (f) counts['sconosciuta'] = (counts['sconosciuta'] || 0) + 1;
+    }
+    for (const nome of Object.keys(s.elementi || {})) {
+      for (const f of (s.elementi[nome].foto || [])) {
+        if (f && f.qualita) counts[f.qualita] = (counts[f.qualita] || 0) + 1;
+        else if (f) counts['sconosciuta'] = (counts['sconosciuta'] || 0) + 1;
+      }
+    }
+  }
+  const keys = Object.keys(counts).filter(k => k !== 'sconosciuta');
+  const mista = keys.length > 1;
+  return { counts, mista };
+}
+
+function viewCambiaQualitaIspezione() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const corrente = isp.fotoQualita || 'bilanciata';
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+      <h1>Qualità foto</h1>
+    </div>
+    <div class="card" style="font-size:13px">
+      <p style="color:var(--muted);margin-bottom:14px">Le foto già scattate non vengono modificate. La nuova impostazione si applica solo alle foto scattate da questo momento in poi.</p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+        ${Object.entries(FOTO_PRESET).map(([k,v]) => {
+          const attivo = corrente === k;
+          return `<button onclick="impostaQualitaIspezione('${k}')" style="padding:7px 13px;border-radius:7px;border:2px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'#e8f0fe':'var(--bg)'};color:${attivo?'#1a56db':'var(--text)'};font-size:12px;font-weight:${attivo?'700':'400'};cursor:pointer">${attivo?'✓ ':''} ${v.label}</button>`;
+        }).join('')}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:4px 6px;font-weight:600">Modalità</th>
+            <th style="text-align:center;padding:4px 6px;font-weight:600">Risoluzione</th>
+            <th style="text-align:center;padding:4px 6px;font-weight:600">Qualità JPEG</th>
+            <th style="text-align:left;padding:4px 6px;font-weight:600">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${_qualitaTableRows(corrente)}
+        </tbody>
+      </table>
+    </div>
+  `);
+}
+
+async function impostaQualitaIspezione(k) {
+  const isp = db.ispezioni[S.ispezioneId];
+  isp.fotoQualita = k;
+  await salvaIspezione(isp);
+  viewCambiaQualitaIspezione();
+}
+
+
 function viewGuida() {
   render(`
     <div class="page-header">
