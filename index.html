@@ -414,6 +414,50 @@ function uuid() {
       });
 }
 
+// ─── QUALITÀ FOTO ─────────────────────────────────────────────────────────────
+const FOTO_PRESET = {
+  alta:       { label: 'Alta qualità',  max: 2400, q: 0.92 },
+  bilanciata: { label: 'Bilanciata',    max: 1200, q: 0.85 },
+  compressa:  { label: 'Compressa',     max:  800, q: 0.75 },
+  originale:  { label: 'Originale',     max: null, q: null  },
+};
+function getFotoPreset() {
+  return FOTO_PRESET[localStorage.getItem('fotoQualita') || 'bilanciata'];
+}
+function setFotoQualita(key) {
+  localStorage.setItem('fotoQualita', key);
+  viewHome();
+}
+
+// Comprime (o lascia originale) una foto e restituisce un Blob
+function comprimiFoto(file) {
+  return new Promise((resolve, reject) => {
+    const preset = getFotoPreset();
+    if (preset.max === null) {
+      // Modalità originale: nessuna compressione
+      if (file.size > 50 * 1024 * 1024) { reject(new Error('File troppo grande (max 50MB in modalità Originale)')); return; }
+      resolve(file);
+      return;
+    }
+    const r = new FileReader();
+    r.onerror = () => reject(r.error);
+    r.onload = e => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Immagine non valida'));
+      img.onload = () => {
+        const scale = Math.min(1, preset.max / Math.max(img.width, img.height));
+        const cvs = document.createElement('canvas');
+        cvs.width  = Math.round(img.width  * scale);
+        cvs.height = Math.round(img.height * scale);
+        cvs.getContext('2d').drawImage(img, 0, 0, cvs.width, cvs.height);
+        cvs.toBlob(blob => blob ? resolve(blob) : reject(new Error('Compressione fallita')), 'image/jpeg', preset.q);
+      };
+      img.src = e.target.result;
+    };
+    r.readAsDataURL(file);
+  });
+}
+
 // Salva ispezione (solo metadati, no blob)
 async function salvaIspezione(isp) {
   try {
@@ -712,6 +756,18 @@ function viewHome() {
         <div id="storage-fill" style="height:100%;border-radius:4px;background:var(--primary);width:0%;transition:width .4s"></div>
       </div>
       <span id="storage-label" style="white-space:nowrap;font-family:'IBM Plex Mono',monospace">…</span>
+    </div>
+    <div style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:6px">
+        <span>📷 Qualità foto:</span>
+        <span style="font-size:11px;color:var(--muted)">${(() => { const p = getFotoPreset(); const k = localStorage.getItem('fotoQualita')||'bilanciata'; return k==='originale' ? '· file originale, nessuna compressione' : `· max ${p.max}px, qualità ${Math.round(p.q*100)}%`; })()}</span>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${Object.entries(FOTO_PRESET).map(([k,v]) => {
+          const attivo = (localStorage.getItem('fotoQualita')||'bilanciata') === k;
+          return `<button onclick="setFotoQualita('${k}')" style="padding:5px 10px;border-radius:6px;border:1.5px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'var(--primary)':'transparent'};color:${attivo?'#fff':'var(--text)'};font-size:12px;cursor:pointer">${v.label}</button>`;
+        }).join('')}
+      </div>
     </div>
     <button class="btn btn-primary btn-block" onclick="viewNuovaIspezione()" style="margin-bottom:16px">
       + Nuova ispezione
@@ -1805,30 +1861,16 @@ async function setNoteGen(val) {
 
 async function addFotoGen(event) {
   const file = event.target.files[0]; if (!file) return;
-  if (file.size > 20 * 1024 * 1024) { toast("⚠ Immagine troppo grande (max 20MB)"); return; }
-  const r = new FileReader();
-  r.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      const MAX = 1200;
-      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-      const cvs = document.createElement("canvas");
-      cvs.width = Math.round(img.width * scale);
-      cvs.height = Math.round(img.height * scale);
-      cvs.getContext("2d").drawImage(img, 0, 0, cvs.width, cvs.height);
-      cvs.toBlob(async blob => {
-        const isp = db.ispezioni[S.ispezioneId];
-        const id = await salvaMedia(isp.id, blob, "foto");
-        const s = getStazione();
-        if (!s.foto_gen) s.foto_gen = [];
-        s.foto_gen.push({ id, didascalia: '' });
-        await salvaIspezione(isp);
-        viewStazione();
-      }, "image/jpeg", 0.80);
-    };
-    img.src = e.target.result;
-  };
-  r.readAsDataURL(file);
+  try {
+    const blob = await comprimiFoto(file);
+    const isp = db.ispezioni[S.ispezioneId];
+    const id = await salvaMedia(isp.id, blob, "foto");
+    const s = getStazione();
+    if (!s.foto_gen) s.foto_gen = [];
+    s.foto_gen.push({ id, didascalia: '' });
+    await salvaIspezione(isp);
+    viewStazione();
+  } catch(e) { toast("⚠ " + e.message); }
 }
 
 async function _delFotoGen(i) {
@@ -1891,28 +1933,14 @@ async function setNote(ei, val) {
 
 async function addFoto(event, ei) {
   const file = event.target.files[0]; if (!file) return;
-  if (file.size > 20 * 1024 * 1024) { toast("⚠ Immagine troppo grande (max 20MB)"); return; }
-  const r = new FileReader();
-  r.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      const MAX = 1200;
-      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-      const cvs = document.createElement("canvas");
-      cvs.width = Math.round(img.width * scale);
-      cvs.height = Math.round(img.height * scale);
-      cvs.getContext("2d").drawImage(img, 0, 0, cvs.width, cvs.height);
-      cvs.toBlob(async blob => {
-        const isp = db.ispezioni[S.ispezioneId];
-        const id = await salvaMedia(isp.id, blob, "foto");
-        getElemento(ei).foto.push({ id, didascalia: '' });
-        await salvaIspezione(isp);
-        viewStazione();
-      }, "image/jpeg", 0.80);
-    };
-    img.src = e.target.result;
-  };
-  r.readAsDataURL(file);
+  try {
+    const blob = await comprimiFoto(file);
+    const isp = db.ispezioni[S.ispezioneId];
+    const id = await salvaMedia(isp.id, blob, "foto");
+    getElemento(ei).foto.push({ id, didascalia: '' });
+    await salvaIspezione(isp);
+    viewStazione();
+  } catch(e) { toast("⚠ " + e.message); }
 }
 
 async function _delFoto(ei, i) {
