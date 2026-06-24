@@ -758,16 +758,41 @@ function viewHome() {
       <span id="storage-label" style="white-space:nowrap;font-family:'IBM Plex Mono',monospace">…</span>
     </div>
     <div style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--muted)">
-      <div style="margin-bottom:8px;display:flex;align-items:center;gap:6px">
-        <span>📷 Qualità foto:</span>
-        <span style="font-size:11px;color:var(--muted)">${(() => { const p = getFotoPreset(); const k = localStorage.getItem('fotoQualita')||'bilanciata'; return k==='originale' ? '· file originale, nessuna compressione' : `· max ${p.max}px, qualità ${Math.round(p.q*100)}%`; })()}</span>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="margin-bottom:10px;font-weight:600;color:var(--text);font-size:13px">📷 Qualità foto</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
         ${Object.entries(FOTO_PRESET).map(([k,v]) => {
           const attivo = (localStorage.getItem('fotoQualita')||'bilanciata') === k;
-          return `<button onclick="setFotoQualita('${k}')" style="padding:5px 10px;border-radius:6px;border:1.5px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'var(--primary)':'transparent'};color:${attivo?'#fff':'var(--text)'};font-size:12px;cursor:pointer">${v.label}</button>`;
+          return `<button onclick="setFotoQualita('${k}')" style="padding:7px 13px;border-radius:7px;border:2px solid ${attivo?'var(--primary)':'var(--border)'};background:${attivo?'#e8f0fe':'var(--bg)'};color:${attivo?'#1a56db':'var(--text)'};font-size:12px;font-weight:${attivo?'700':'400'};cursor:pointer;box-shadow:${attivo?'0 2px 8px rgba(0,0,0,0.10)':'none'}">${attivo?'✓ ':''} ${v.label}</button>`;
         }).join('')}
       </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:4px 6px;font-weight:600">Modalità</th>
+            <th style="text-align:center;padding:4px 6px;font-weight:600">Risoluzione</th>
+            <th style="text-align:center;padding:4px 6px;font-weight:600">Qualità JPEG</th>
+            <th style="text-align:left;padding:4px 6px;font-weight:600">Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[
+            ['alta',       'Alta qualità',       'max 2400px', '92%',       '~800KB/foto · per ispezioni importanti'],
+            ['bilanciata', 'Bilanciata (default)','max 1200px', '85%',       '~200KB/foto · uso quotidiano'],
+            ['compressa',  'Compressa',           'max 800px',  '75%',       '~80KB/foto · ispezioni lunghe'],
+            ['originale',  'Originale',           'originale',  'originale', 'file salvato senza alcuna modifica · max 50MB'],
+          ].map(([k, label, res, q, note]) => {
+            const attivo = (localStorage.getItem('fotoQualita')||'bilanciata') === k;
+            return `<tr style="background:${attivo?'rgba(var(--primary-rgb,59,130,246),0.08)':'transparent'};border-bottom:1px solid var(--border)">
+              <td style="padding:5px 6px;font-weight:${attivo?'700':'400'};color:${attivo?'var(--primary)':'var(--text)'}">
+                ${attivo?'→ ':''}${label}
+              </td>
+              <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${res}</td>
+              <td style="padding:5px 6px;text-align:center;font-family:'IBM Plex Mono',monospace">${q}</td>
+              <td style="padding:5px 6px;color:var(--muted)">${note}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
     </div>
     <button class="btn btn-primary btn-block" onclick="viewNuovaIspezione()" style="margin-bottom:16px">
       + Nuova ispezione
