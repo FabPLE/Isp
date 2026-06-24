@@ -1269,13 +1269,14 @@ async function viewStazioneAsync() {
       <div style="flex:1;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <button onclick="toggleSegnoProgressiva()" id="btn-segno"
           style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;
-                 background:${s.progressiva < 0 ? 'var(--att-bg)' : 'var(--surface)'};
-                 color:${s.progressiva < 0 ? 'var(--att)' : 'var(--muted)'};
+                 background:${s.progressiva !== '' && s.progressiva < 0 ? 'var(--att-bg)' : 'var(--surface)'};
+                 color:${s.progressiva !== '' && s.progressiva < 0 ? 'var(--att)' : 'var(--muted)'};
                  border:1px solid var(--border);border-radius:6px;
                  padding:3px 8px;cursor:pointer;min-width:32px;text-align:center"
-          title="Cambia segno">${s.progressiva < 0 ? '−' : '+'}</button>
+          title="Cambia segno">${s.progressiva !== '' && s.progressiva < 0 ? '−' : '+'}</button>
         <input type="text" inputmode="numeric" id="prog-edit"
-          value="${Math.abs(s.progressiva)}"
+          value="${s.progressiva !== '' && s.progressiva !== null && s.progressiva !== undefined ? Math.abs(s.progressiva) : ''}"
+          placeholder="es. 100"
           style="font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;
                  border:none;border-bottom:2px solid var(--accent);background:transparent;
                  width:72px;padding:2px 4px;outline:none;color:var(--text)"
@@ -1873,6 +1874,12 @@ function toggleSegnoProgressiva() {
 }
 
 async function setProgressiva(val) {
+  const trimmed = (val || '').replace(/^[+-]/, '').trim();
+  if (trimmed === '') {
+    getStazione().progressiva = '';
+    await salvaIspezione(db.ispezioni[S.ispezioneId]);
+    return;
+  }
   const n = parseInt(val);
   if (isNaN(n)) { toast("⚠ Progressiva non valida"); return; }
   getStazione().progressiva = n;
