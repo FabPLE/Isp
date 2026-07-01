@@ -780,7 +780,7 @@ function viewHome() {
     <div class="page-header">
       <div style="flex:1">
         <h1 style="margin-bottom:2px">EasyIS – Tool per Ispezioni</h1>
-        <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.02</div>
+        <div style="font-size:11px;color:var(--muted);font-family:'IBM Plex Mono',monospace;letter-spacing:0.5px">v1.03</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
         <button class="btn btn-sm btn-outline" onclick="viewGuida()" title="Guida">Help</button>
@@ -836,6 +836,20 @@ function viewNuovaIspezione() {
     </div>
     <div class="card">
       <div class="form-group">
+        <label class="form-label">Tipo opera</label>
+        <div style="display:flex;gap:8px;margin-bottom:4px">
+          <button type="button" id="tipo-lineare" onclick="selezionaTipoOpera('lineare')"
+            style="flex:1;padding:9px 12px;border-radius:7px;border:2px solid var(--primary);background:#e8f0fe;color:#1a56db;font-size:13px;font-weight:700;cursor:pointer">
+            ✓ Lineare (galleria, canale…)
+          </button>
+          <button type="button" id="tipo-puntuale" onclick="selezionaTipoOpera('puntuale')"
+            style="flex:1;padding:9px 12px;border-radius:7px;border:2px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-weight:400;cursor:pointer">
+            Puntuale (pozzi, nodi…)
+          </button>
+        </div>
+        <div style="font-size:11px;color:var(--muted)" id="tipo-hint">Opera lineare: stazioni identificate da progressiva metrica.</div>
+      </div>
+      <div class="form-group">
         <label class="form-label">Opera</label>
         <input type="text" id="opera" placeholder="Es. Opera">
       </div>
@@ -855,7 +869,7 @@ function viewNuovaIspezione() {
         <label class="form-label">Data ispezione</label>
         <input type="date" id="data_isp" value="${oggi}">
       </div>
-      <div class="form-group">
+      <div class="form-group" id="gruppo-lunghezza">
         <label class="form-label">Lunghezza opera (m)</label>
         <input type="number" id="lunghezza" placeholder="Es. 4100" min="0" step="1">
       </div>
@@ -890,6 +904,24 @@ function viewNuovaIspezione() {
   `);
 }
 
+function selezionaTipoOpera(tipo) {
+  const btnL = document.getElementById('tipo-lineare');
+  const btnP = document.getElementById('tipo-puntuale');
+  const hint = document.getElementById('tipo-hint');
+  const grpL = document.getElementById('gruppo-lunghezza');
+  if (tipo === 'lineare') {
+    btnL.style.border = '2px solid var(--primary)'; btnL.style.background = '#e8f0fe'; btnL.style.color = '#1a56db'; btnL.style.fontWeight = '700'; btnL.textContent = '✓ Lineare (galleria, canale…)';
+    btnP.style.border = '2px solid var(--border)';  btnP.style.background = 'var(--bg)'; btnP.style.color = 'var(--text)'; btnP.style.fontWeight = '400'; btnP.textContent = 'Puntuale (pozzi, nodi…)';
+    hint.textContent = 'Opera lineare: stazioni identificate da progressiva metrica.';
+    if (grpL) grpL.style.display = '';
+  } else {
+    btnP.style.border = '2px solid var(--primary)'; btnP.style.background = '#e8f0fe'; btnP.style.color = '#1a56db'; btnP.style.fontWeight = '700'; btnP.textContent = '✓ Puntuale (pozzi, nodi…)';
+    btnL.style.border = '2px solid var(--border)';  btnL.style.background = 'var(--bg)'; btnL.style.color = 'var(--text)'; btnL.style.fontWeight = '400'; btnL.textContent = 'Lineare (galleria, canale…)';
+    hint.textContent = 'Opera puntuale: stazioni numerate con un singolo elemento.';
+    if (grpL) grpL.style.display = 'none';
+  }
+}
+
 async function _creaIspezione() {
   const opera     = document.getElementById("opera").value.trim();
   const ispettore = document.getElementById("ispettore").value.trim();
@@ -897,15 +929,19 @@ async function _creaIspezione() {
   // Leggi la qualità selezionata dal pulsante attivo
   const qBtn = [...document.querySelectorAll('[id^="qbtn-"]')].find(b => b.style.fontWeight === '700');
   const fotoQualita = qBtn ? qBtn.id.replace('qbtn-','') : 'bilanciata';
+  // Leggi tipo opera
+  const tipoBtn = document.getElementById('tipo-puntuale');
+  const tipo_opera = (tipoBtn && tipoBtn.style.fontWeight === '700') ? 'puntuale' : 'lineare';
   const isp = {
     id:       uuid(),
+    tipo_opera,
     opera,
     impianto: document.getElementById("impianto").value.trim(),
     ispettore,
     comune:   document.getElementById("comune").value.trim(),
     data:     document.getElementById("data_isp").value,
     ora:      new Date().toTimeString().slice(0,5),
-    lunghezza: parseInt(document.getElementById("lunghezza").value) || null,
+    lunghezza: tipo_opera === 'lineare' ? (parseInt(document.getElementById("lunghezza").value) || null) : null,
     note_gen: document.getElementById("note_gen").value.trim(),
     fotoQualita,
     stazioni: []
@@ -929,15 +965,24 @@ function viewIspezione() {
     const totElementi = Object.keys(s.elementi).length;
     const chsNumerici = Object.values(s.elementi).map(e => e.chs).filter(c => c && c !== 'NA');
     const badgeChs = chsEffettivoStazione(s);
-    const progRel = (s.progressiva !== null && s.progressiva !== undefined && s.progressiva !== '') ? escHtml(String(s.progressiva)) : '–';
-    const hasAss = s.progressiva_ass !== null && s.progressiva_ass !== undefined;
+    let titleHtml, metaHtml;
+    if (isp.tipo_opera === 'puntuale') {
+      const nomeEl = Object.keys(s.elementi)[0] || '–';
+      titleHtml = `<span style="font-family:'IBM Plex Mono',monospace">Stazione ${s.numero}</span><span style="font-size:12px;color:var(--muted);font-weight:400;margin-left:8px">${escHtml(nomeEl)}</span>`;
+      metaHtml = chsNumerici.length ? 'Valutata' : 'Non valutata';
+    } else {
+      const progRel = (s.progressiva !== null && s.progressiva !== undefined && s.progressiva !== '') ? escHtml(String(s.progressiva)) : '–';
+      const hasAss = s.progressiva_ass !== null && s.progressiva_ass !== undefined;
+      titleHtml = `${progRel} m${hasAss ? `<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:6px">(ass. ${escHtml(String(s.progressiva_ass))} m)</span>` : ''}`;
+      metaHtml = `${totElementi} elementi · ${chsNumerici.length} valutati`;
+    }
     return `
     <div class="card" style="display:flex;align-items:center;gap:10px;cursor:default">
       <div style="flex:1;cursor:pointer" onclick="apriStazione(${originalIdx})">
         <div class="card-row">
           <div>
-            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${progRel} m${hasAss ? `<span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:6px">(ass. ${escHtml(String(s.progressiva_ass))} m)</span>` : ''}</div>
-            <div class="card-meta">${totElementi} elementi · ${chsNumerici.length} valutati</div>
+            <div class="card-title" style="font-family:'IBM Plex Mono',monospace">${titleHtml}</div>
+            <div class="card-meta">${metaHtml}</div>
           </div>
           ${chsBadge(badgeChs)}
         </div>
@@ -961,6 +1006,7 @@ function viewIspezione() {
           ${isp.impianto ? `<span>🏭 ${escHtml(isp.impianto)}</span>` : ''}
           ${isp.comune   ? `<span>📍 ${escHtml(isp.comune)}</span>`   : ''}
           ${isp.lunghezza ? `<span>📏 ${isp.lunghezza} m</span>` : ''}
+          <span style="background:${isp.tipo_opera==='puntuale'?'var(--att-bg)':'var(--accent-light)'};color:${isp.tipo_opera==='puntuale'?'var(--att)':'var(--accent)'};padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600">${isp.tipo_opera==='puntuale'?'Puntuale':'Lineare'}</span>
         </div>
         <button class="btn btn-outline btn-sm" onclick="viewModificaIspezione()" style="font-size:11px;flex-shrink:0;margin-left:8px">✏️ Modifica</button>
       </div>
@@ -1025,9 +1071,9 @@ function viewIspezione() {
     ${stList}
 
     <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">
-      <button class="btn btn-outline btn-block" onclick="viewConvertProgressive()" style="font-size:13px">
+      ${isp.tipo_opera !== 'puntuale' ? `<button class="btn btn-outline btn-block" onclick="viewConvertProgressive()" style="font-size:13px">
         📐 Converti progressive relative → assolute
-      </button>
+      </button>` : ''}
       <button class="btn btn-danger btn-block" onclick="eliminaIspezione()">Elimina ispezione</button>
     </div>
   `);
@@ -1115,6 +1161,11 @@ function parseProgressiva(s) {
 }
 
 function stazioniOrdinate(ispezione) {
+  if (ispezione.tipo_opera === 'puntuale') {
+    return [...ispezione.stazioni]
+      .map((s, originalIdx) => ({ s, originalIdx, metri: s.numero ?? Infinity }))
+      .sort((a, b) => a.metri - b.metri);
+  }
   return [...ispezione.stazioni]
     .map((s, originalIdx) => ({ s, originalIdx, metri: parseProgressiva(s.progressiva) ?? Infinity }))
     .sort((a, b) => a.metri - b.metri);
@@ -1161,6 +1212,12 @@ function trascriviTutto()          { _trascriviTutto().catch(e => toast("⚠ " +
 async function _viewNuovaStazione() {
   const isp = db.ispezioni[S.ispezioneId];
 
+  // Per opere puntuali, mostra il form di aggiunta stazione puntuale
+  if (isp.tipo_opera === 'puntuale') {
+    viewNuovaStazionePuntuale();
+    return;
+  }
+
   const stazione = {
     progressiva: '',
     note_gen: "",
@@ -1190,11 +1247,188 @@ async function _viewNuovaStazione() {
   }
 }
 
+// ─── GESTIONE STAZIONI PUNTUALI ──────────────────────────────────────────────
+
+function viewNuovaStazionePuntuale() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const prossimoNum = isp.stazioni.length + 1;
+
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+      <h1>Nuova stazione</h1>
+    </div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="form-group">
+        <label class="form-label">Numero stazione</label>
+        <input type="number" id="num-stazione" value="${prossimoNum}" min="1" step="1" placeholder="Es. 1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome / Elemento</label>
+        <input type="text" id="nome-elemento" placeholder="Es. Pozzetto Via Roma">
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
+        Importa da file TXT
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.5">
+        Formato atteso: una riga per stazione, <code style="background:var(--bg);padding:1px 4px;border-radius:3px">numero;nome_elemento</code><br>
+        Es. <code style="background:var(--bg);padding:1px 4px;border-radius:3px">1;Pozzetto Via Roma</code>
+      </div>
+      <label class="btn btn-outline" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:8px">
+        📂 Carica TXT
+        <input type="file" accept=".txt,text/plain" style="display:none" onchange="importaTxtPuntuale(this)">
+      </label>
+      <div id="txt-preview" style="display:none;margin-top:6px"></div>
+    </div>
+
+    <div id="lista-stazioni-import" style="display:none" class="card" style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
+        Stazioni da importare (modificabili)
+      </div>
+      <div id="stazioni-import-list"></div>
+      <button class="btn btn-primary btn-block" onclick="creaTutteStazioniPuntuali()" style="margin-top:10px">
+        ✓ Crea tutte le stazioni
+      </button>
+    </div>
+
+    <button class="btn btn-primary btn-block" id="btn-crea-singola" onclick="creaStazionePuntuale()" style="margin-bottom:8px">
+      + Aggiungi stazione
+    </button>
+  `);
+}
+
+// Importa lista stazioni da file TXT (formato: numero;nome)
+function importaTxtPuntuale(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onerror = () => toast('⚠ Errore lettura file');
+  r.onload = e => {
+    const righe = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+    const stazioni = [];
+    const errori = [];
+    righe.forEach((riga, i) => {
+      const parti = riga.split(';');
+      if (parti.length >= 2) {
+        const num = parseInt(parti[0].trim());
+        const nome = parti.slice(1).join(';').trim();
+        if (!isNaN(num) && nome) {
+          stazioni.push({ num, nome });
+        } else {
+          errori.push(`Riga ${i+1}: "${riga}" non valida`);
+        }
+      } else {
+        errori.push(`Riga ${i+1}: formato non valido (manca il ";")`);
+      }
+    });
+
+    // Preview
+    const prev = document.getElementById('txt-preview');
+    if (prev) {
+      prev.style.display = 'block';
+      prev.innerHTML = `<div style="font-size:12px;color:${errori.length?'var(--att)':'var(--good)'};margin-bottom:4px">
+        ${stazioni.length} stazioni trovate${errori.length ? `, ${errori.length} righe ignorate` : ''}
+      </div>
+      ${errori.length ? `<div style="font-size:11px;color:var(--muted)">${errori.slice(0,3).map(escHtml).join('<br>')}</div>` : ''}`;
+    }
+
+    if (!stazioni.length) { toast('⚠ Nessuna stazione valida nel file'); return; }
+
+    // Mostra lista editabile
+    const listEl = document.getElementById('lista-stazioni-import');
+    const listHtml = document.getElementById('stazioni-import-list');
+    if (listEl && listHtml) {
+      listEl.style.display = 'block';
+      listHtml.innerHTML = stazioni.map((s, i) => `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <input type="number" value="${s.num}" id="imp-num-${i}"
+            style="width:60px;flex-shrink:0" min="1">
+          <input type="text" value="${escHtml(s.nome)}" id="imp-nome-${i}" style="flex:1">
+          <button class="btn btn-danger btn-sm" onclick="this.closest('div').remove()">✕</button>
+        </div>`).join('');
+      // Nasconde il pulsante aggiungi singola quando si usa l'import
+      const btnSingola = document.getElementById('btn-crea-singola');
+      if (btnSingola) btnSingola.style.display = 'none';
+    }
+  };
+  r.readAsText(file);
+  input.value = '';
+}
+
+// Crea tutte le stazioni importate dal TXT
+async function creaTutteStazioniPuntuali() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const righe = document.querySelectorAll('#stazioni-import-list > div');
+  const stazioni = [];
+  let i = 0;
+  for (const div of righe) {
+    const numEl  = document.getElementById(`imp-num-${i}`);
+    const nomeEl = document.getElementById(`imp-nome-${i}`);
+    if (!numEl || !nomeEl) { i++; continue; }
+    const num  = parseInt(numEl.value);
+    const nome = nomeEl.value.trim();
+    if (!isNaN(num) && nome) stazioni.push({ num, nome });
+    i++;
+  }
+  if (!stazioni.length) { toast('⚠ Nessuna stazione da creare'); return; }
+
+  for (const { num, nome } of stazioni) {
+    const stazione = _creaStazionePuntualeObj(num, nome);
+    isp.stazioni.push(stazione);
+  }
+  await salvaIspezione(isp);
+  toast(`✓ ${stazioni.length} stazioni create`);
+  viewIspezione();
+}
+
+function _creaStazionePuntualeObj(num, nome) {
+  return {
+    tipo: 'puntuale',
+    numero: num,
+    note_gen: '',
+    foto_gen: [],
+    audio: [],
+    elementi: {
+      [nome]: { chs: null, note: '', foto: [], audio: [] }
+    }
+  };
+}
+
+// Crea singola stazione puntuale
+async function creaStazionePuntuale() {
+  const isp = db.ispezioni[S.ispezioneId];
+  const num  = parseInt(document.getElementById('num-stazione').value);
+  const nome = (document.getElementById('nome-elemento').value || '').trim();
+  if (isNaN(num) || num < 1) { toast('⚠ Numero stazione non valido'); return; }
+  if (!nome) { toast('⚠ Inserisci il nome dell\'elemento'); return; }
+  const stazione = _creaStazionePuntualeObj(num, nome);
+  isp.stazioni.push(stazione);
+  S.stazioneId = isp.stazioni.length - 1;
+  await salvaIspezione(isp);
+  toast('✓ Stazione creata');
+  viewStazione();
+}
+
 function annullaConfigurazione() {
   // Rimuovi la stazione appena creata e torna all'ispezione
   const isp = db.ispezioni[S.ispezioneId];
   isp.stazioni.splice(S.stazioneId, 1);
   salvaIspezione(isp).then(() => viewIspezione());
+}
+
+async function rinominaElementoPuntuale(nuovoNome) {
+  nuovoNome = (nuovoNome || '').trim();
+  if (!nuovoNome) return;
+  const isp = db.ispezioni[S.ispezioneId];
+  const s = getStazione();
+  const vecchioNome = Object.keys(s.elementi)[0];
+  if (!vecchioNome || vecchioNome === nuovoNome) return;
+  s.elementi[nuovoNome] = s.elementi[vecchioNome];
+  delete s.elementi[vecchioNome];
+  await salvaIspezione(isp);
 }
 
 // ─── STAZIONE ────────────────────────────────────────────────────────────────
@@ -1312,9 +1546,18 @@ async function viewStazioneAsync() {
   const prevOrigIdx = posInOrdine > 0 ? ordinate[posInOrdine - 1].originalIdx : null;
   const nextOrigIdx = posInOrdine < ordinate.length - 1 ? ordinate[posInOrdine + 1].originalIdx : null;
 
-  render(`
-    <div class="page-header">
-      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+  const isPuntuale = isp.tipo_opera === 'puntuale';
+  const nomeElementoPuntuale = isPuntuale ? Object.keys(s.elementi)[0] || '' : '';
+
+  const headerCentro = isPuntuale ? `
+      <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700">Stazione ${s.numero}</span>
+        <input type="text" id="nome-el-puntuale" value="${escHtml(nomeElementoPuntuale)}"
+          placeholder="Nome elemento"
+          style="font-size:13px;border:none;border-bottom:2px solid var(--accent);background:transparent;
+                 flex:1;min-width:100px;padding:2px 4px;outline:none;color:var(--muted);font-family:inherit"
+          onchange="rinominaElementoPuntuale(this.value)">
+      </div>` : `
       <div style="flex:1;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
         <button onclick="toggleSegnoProgressiva()" id="btn-segno"
           style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;
@@ -1334,7 +1577,12 @@ async function viewStazioneAsync() {
         ${s.progressiva_ass !== null && s.progressiva_ass !== undefined
           ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--accent);font-weight:600;margin-left:4px">${s.progressiva_ass} m ass.</span>`
           : ''}
-      </div>
+      </div>`;
+
+  render(`
+    <div class="page-header">
+      <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
+      ${headerCentro}
       <button class="btn btn-outline btn-sm" onclick="apriStazione(${prevOrigIdx})"
         ${prevOrigIdx === null ? 'disabled' : ''} title="Stazione precedente" style="padding:5px 9px">‹</button>
       <button class="btn btn-outline btn-sm" onclick="apriStazione(${nextOrigIdx})"
@@ -1370,8 +1618,8 @@ async function viewStazioneAsync() {
     </div>
 
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span>Elementi</span>
-      <button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>
+      <span>Elemento</span>
+      ${!isPuntuale ? `<button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>` : ''}
     </div>
     ${elemHtml}
   `);
@@ -1889,7 +2137,10 @@ function audioItem(src, delFn, numero) {
 async function _eliminaStazione(originalIdx) {
   const isp = db.ispezioni[S.ispezioneId];
   const s = isp.stazioni[originalIdx];
-  mostraConferma("Elimina stazione", `Eliminare la stazione ${s.progressiva} m?`, async () => {
+  const label = isp.tipo_opera === 'puntuale'
+    ? `Stazione ${s.numero} – ${Object.keys(s.elementi)[0] || ''}`
+    : `${s.progressiva} m`;
+  mostraConferma("Elimina stazione", `Eliminare la stazione ${label}?`, async () => {
     for (const nome of Object.keys(s.elementi)) {
       const el = s.elementi[nome];
       for (const id of [...el.foto, ...el.audio]) await idbDelete("media", id);
@@ -2184,27 +2435,32 @@ function viewGuida() {
     <div class="card" style="font-size:13px;line-height:1.7;color:var(--text)">
 
       <div style="font-size:15px;font-weight:700;margin-bottom:6px">EasyIS – Guida rapida</div>
-      <p style="color:var(--muted);margin-bottom:16px">EasyIS è uno strumento per condurre ispezioni in campo su opere civili (gallerie, ponti, viadotti, ecc.). Tutto funziona direttamente dal browser del telefono, senza installare nulla e senza connessione internet.</p>
+      <p style="color:var(--muted);margin-bottom:16px">EasyIS è uno strumento per condurre ispezioni in campo su opere civili (gallerie, ponti, viadotti, pozzi, ecc.). Tutto funziona direttamente dal browser del telefono, senza installare nulla e senza connessione internet.</p>
 
-      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Come è organizzata un'ispezione</div>
-      <p style="margin-bottom:16px">Un'ispezione è composta da una serie di <b>stazioni</b>, ognuna delle quali corrisponde a un punto fisico lungo l'opera (identificato da una progressiva in metri). Per ogni stazione puoi rilevare uno o più <b>elementi</b> (es. rivestimento, soletta, piedritti) e per ciascuno assegnare il CHS, aggiungere note, foto e registrazioni audio.</p>
+      <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Tipi di opera</div>
+      <p style="margin-bottom:6px">Al momento della creazione scegli il tipo di opera:</p>
+      <ul style="margin:0 0 16px 16px;padding:0">
+        <li><b>Lineare</b> (galleria, canale, viadotto…) – le stazioni sono identificate da una <b>progressiva in metri</b>. Ogni stazione può avere più elementi (Platea, Piedritti, Calotta, ecc.), ciascuno con CHS, note, foto e audio. Le progressive possono essere convertite da relative ad assolute.</li>
+        <li style="margin-top:6px"><b>Puntuale</b> (pozzi, nodi, scarichi…) – le stazioni sono identificate da un <b>numero progressivo</b> (1, 2, 3…) e da un <b>nome elemento unico</b> (es. "Pozzetto Via Roma"). Il CHS coincide direttamente con quello dell'elemento.</li>
+      </ul>
 
       <div style="font-weight:700;margin-bottom:8px;color:var(--accent)">I passi principali</div>
 
       <div style="margin-bottom:10px"><b>1. Crea una nuova ispezione</b><br>
-      Dalla home premi "+ Nuova ispezione". Inserisci i dati dell'opera (nome, impianto, ispettore, comune, data, lunghezza) e scegli la qualità con cui vuoi salvare le foto. Una volta creata, l'ispezione appare nella lista della home.</div>
+      Dalla home premi "+ Nuova ispezione". Scegli il tipo (Lineare o Puntuale), inserisci i dati dell'opera e la qualità foto. Per le opere lineari è disponibile il campo Lunghezza.</div>
 
       <div style="margin-bottom:10px"><b>2. Aggiungi le stazioni</b><br>
-      Dentro l'ispezione premi "+ Nuova stazione". Inserisci la progressiva (la distanza in metri dal punto di riferimento), poi aggiungi gli elementi che vuoi rilevare scegliendo dalla lista predefinita.</div>
+      <i>Lineare:</i> premi "+ Nuova stazione", inserisci la progressiva e configura gli elementi. La lista viene proposta come default per le stazioni successive.<br>
+      <i>Puntuale:</i> premi "+ Nuova stazione". Puoi aggiungere una stazione alla volta (numero + nome elemento) oppure <b>importare un file TXT</b> con l'intera lista. Formato: una riga per stazione, <code style="background:var(--bg);padding:1px 5px;border-radius:3px">numero;nome_elemento</code> (es. <code style="background:var(--bg);padding:1px 5px;border-radius:3px">1;Pozzetto Via Roma</code>). Le stazioni importate restano modificabili prima della conferma.</div>
 
       <div style="margin-bottom:10px"><b>3. Compila ogni elemento</b><br>
-      Per ogni elemento puoi assegnare il CHS su una scala da 1 a 5 (1 = Critico, 5 = Ottimo) oppure marcarlo come N/A se non applicabile. Puoi aggiungere note testuali, foto e audio direttamente dalla schermata della stazione.</div>
+      Per ogni elemento puoi assegnare il CHS (1 = Critico, 5 = Ottimo) oppure NA. Puoi aggiungere note, foto e audio. Per le puntuali, il nome dell'elemento è modificabile direttamente dall'intestazione della stazione.</div>
 
-      <div style="margin-bottom:10px"><b>4. Progressive assolute</b><br>
-      Se conosci la progressiva assoluta di una stazione di riferimento, puoi usare la funzione "Progressive assolute" per calcolare automaticamente le progressive assolute di tutte le stazioni a partire da quella relativa.</div>
+      <div style="margin-bottom:10px"><b>4. Progressive assolute</b> (solo opere lineari)<br>
+      Se conosci la progressiva assoluta di una stazione di riferimento, usa la funzione "Progressive assolute" per calcolare automaticamente le progressive assolute di tutte le stazioni.</div>
 
       <div style="margin-bottom:16px"><b>5. Esporta i dati</b><br>
-      Quando hai finito, dalla home puoi esportare tutte le ispezioni oppure, dall'interno di ogni ispezione, esportare solo quella specifica. Il file JSON contiene tutti i dati, le foto e gli audio. Conservalo come copia di sicurezza.</div>
+      Dall'interno di ogni ispezione premi "⬇ Esporta" per scaricare JSON (con foto), CSV (solo dati) o Report HTML. Il JSON include il campo <code style="background:var(--bg);padding:1px 5px;border-radius:3px">tipo_opera</code> ("lineare" o "puntuale") e la struttura stazioni adeguata, per facilitare la rendicontazione in sistemi esterni.</div>
 
       <div style="font-weight:700;margin-bottom:4px;color:var(--accent)">Il CHS e la percentuale di completamento</div>
       <p style="margin-bottom:16px">Il CHS della stazione viene calcolato automaticamente prendendo il valore più basso tra tutti gli elementi rilevati: è il punto più critico a determinare il giudizio complessivo della stazione.<br><br>
@@ -2452,18 +2708,29 @@ async function _esportaTutteJSON() {
 
 function esportaCSV() {
   const isp = db.ispezioni[S.ispezioneId];
-  const hasAss = isp.stazioni.some(s => s.progressiva_ass !== null && s.progressiva_ass !== undefined);
-  let csv = hasAss ? "Prog.Relativa;Prog.Assoluta;Elemento;CHS;Note\n" : "Progressiva;Elemento;CHS;Note\n";
-  isp.stazioni.forEach(s => {
-    Object.keys(s.elementi).forEach(nome => {
-      const e = s.elementi[nome];
-      if (hasAss) {
-        csv += `"${s.progressiva}";"${s.progressiva_ass ?? ''}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
-      } else {
-        csv += `"${s.progressiva}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
-      }
+  let csv;
+  if (isp.tipo_opera === 'puntuale') {
+    csv = "Numero;Elemento;CHS;Note\n";
+    stazioniOrdinate(isp).forEach(({s}) => {
+      Object.keys(s.elementi).forEach(nome => {
+        const e = s.elementi[nome];
+        csv += `"${s.numero}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+      });
     });
-  });
+  } else {
+    const hasAss = isp.stazioni.some(s => s.progressiva_ass !== null && s.progressiva_ass !== undefined);
+    csv = hasAss ? "Prog.Relativa;Prog.Assoluta;Elemento;CHS;Note\n" : "Progressiva;Elemento;CHS;Note\n";
+    isp.stazioni.forEach(s => {
+      Object.keys(s.elementi).forEach(nome => {
+        const e = s.elementi[nome];
+        if (hasAss) {
+          csv += `"${s.progressiva}";"${s.progressiva_ass ?? ''}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+        } else {
+          csv += `"${s.progressiva}";"${nome}";"${e.chs||''}";"${(e.note||'').replace(/"/g,'""')}"\n`;
+        }
+      });
+    });
+  }
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   dlBlob(blob, `ispezione_${isp.opera.replace(/\s+/g,'_')}_${isp.data}.csv`);
   toast("✓ CSV esportato");
@@ -2507,13 +2774,17 @@ async function _esportaReport() {
   </div>`;
 
   for (const s of stazioniOrdinate(isp).map(x=>x.s)) {
-    html += `<div class="stazione"><div class="st-title">Stazione ${s.progressiva} m rel.${s.progressiva_ass !== null && s.progressiva_ass !== undefined ? ` · ${s.progressiva_ass} m ass.` : ''}</div>`;
+    const stTitle = isp.tipo_opera === 'puntuale'
+      ? `Stazione ${s.numero} – ${Object.keys(s.elementi)[0] || ''}`
+      : `Stazione ${s.progressiva} m rel.${s.progressiva_ass !== null && s.progressiva_ass !== undefined ? ` · ${s.progressiva_ass} m ass.` : ''}`;
+    html += `<div class="stazione"><div class="st-title">${stTitle}</div>`;
     for (const nome of Object.keys(s.elementi)) {
       const e = s.elementi[nome];
       const col = e.chs ? chsColors[e.chs] : '#888';
       const bg  = e.chs ? chsBg[e.chs]     : '#f5f5f5';
       // Carica foto come base64 per il report standalone
-      const fotoB64 = await Promise.all(e.foto.map(async id => {
+      const fotoB64 = await Promise.all(e.foto.map(async fotoObj => {
+        const id = fotoObj && fotoObj.id ? fotoObj.id : fotoObj;
         const r = await idbGet("media", id);
         return r ? await blobToBase64(r.blob) : null;
       }));
