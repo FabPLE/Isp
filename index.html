@@ -770,9 +770,9 @@ function viewHome() {
           <div class="card-title">${escHtml(isp.opera)}</div>
           <div class="card-meta">${isp.data} · ${escHtml(isp.ispettore)} · ${isp.stazioni.length} stazioni</div>
         </div>
-        <span class="card-badge" style="${badgeColor}">${pct}%</span>
+        <span class="card-badge" style="${badgeColor}">${pct !== null ? pct + '%' : '–'}</span>
       </div>
-      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      ${pct !== null ? `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>` : ''}
     </div>`;
   }).join("") : `<div class="empty"><div class="empty-icon">🏗</div>Nessuna ispezione ancora.<br>Crea la prima con il pulsante sopra.</div>`;
 
@@ -1018,14 +1018,20 @@ function viewIspezione() {
         </div>
         <button class="btn btn-outline btn-sm" onclick="viewCambiaQualitaIspezione()" style="font-size:11px">Cambia</button>
       </div>
+      ${pct !== null ? `
       <div style="margin-top:10px">
         <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:4px">
-          <span>Avanzamento${isp.lunghezza ? ` su ${isp.lunghezza} m` : ''}</span>
+          <span>${isp.tipo_opera === 'puntuale'
+            ? `Compilazione (${isp.stazioni.filter(s => chsEffettivoStazione(s) !== null).length} / ${isp._totaleStazioniPuntuali} stazioni)`
+            : `Avanzamento${isp.lunghezza ? ` su ${isp.lunghezza} m` : ''}`}</span>
           <span>${pct}%</span>
         </div>
         <div class="progress-bar" style="height:6px"><div class="progress-fill" style="width:${pct}%"></div></div>
-        ${!isp.lunghezza ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Inserisci la lunghezza opera per calcolare l'avanzamento</div>` : ''}
-      </div>
+        ${isp.tipo_opera !== 'puntuale' && !isp.lunghezza ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Inserisci la lunghezza opera per calcolare l'avanzamento</div>` : ''}
+      </div>` : (isp.tipo_opera !== 'puntuale' ? `
+      <div style="margin-top:10px">
+        <div style="font-size:11px;color:var(--muted)">Inserisci la lunghezza opera per calcolare l'avanzamento</div>
+      </div>` : '')}
       ${isp.stazioni.length > 0 ? (() => {
         const stValutate = isp.stazioni.filter(s => chsEffettivoStazione(s) !== null).length;
         const totSt = isp.stazioni.length;
@@ -1172,6 +1178,12 @@ function stazioniOrdinate(ispezione) {
 }
 
 function completionPercent(ispezione) {
+  if (ispezione.tipo_opera === 'puntuale') {
+    // Solo se l'elenco è stato importato da TXT
+    if (!ispezione._totaleStazioniPuntuali) return null;
+    const compilate = ispezione.stazioni.filter(s => chsEffettivoStazione(s) !== null).length;
+    return Math.min(100, Math.round(compilate / ispezione._totaleStazioniPuntuali * 100));
+  }
   if (!ispezione.stazioni.length || !ispezione.lunghezza) return 0;
   const vals = ispezione.stazioni.map(s => parseProgressiva(s.progressiva)).filter(v => v !== null);
   if (!vals.length) return 0;
@@ -1251,13 +1263,41 @@ async function _viewNuovaStazione() {
 
 function viewNuovaStazionePuntuale() {
   const isp = db.ispezioni[S.ispezioneId];
+  const primaStazione = isp.stazioni.length === 0;
   const prossimoNum = isp.stazioni.length + 1;
+
+  const sezioneImport = primaStazione ? `
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
+        Importa elenco da file TXT
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.5">
+        Formato: una riga per stazione → <code style="background:var(--bg);padding:1px 4px;border-radius:3px">numero;nome_elemento</code><br>
+        Es. <code style="background:var(--bg);padding:1px 4px;border-radius:3px">1;Pozzetto Via Roma</code>
+      </div>
+      <label class="btn btn-outline" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:8px">
+        📂 Carica TXT
+        <input type="file" accept=".txt,text/plain" style="display:none" onchange="importaTxtPuntuale(this)">
+      </label>
+      <div id="txt-preview" style="display:none;margin-top:6px"></div>
+    </div>
+    <div id="lista-stazioni-import" style="display:none" class="card" style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
+        Stazioni da importare (modificabili)
+      </div>
+      <div id="stazioni-import-list"></div>
+      <button class="btn btn-primary btn-block" onclick="creaTutteStazioniPuntuali()" style="margin-top:10px">
+        ✓ Crea tutte le stazioni
+      </button>
+    </div>
+    <div style="text-align:center;font-size:12px;color:var(--muted);margin:4px 0 10px">— oppure aggiungi una singola stazione —</div>` : '';
 
   render(`
     <div class="page-header">
       <button class="back-btn" onclick="viewIspezione()">← Indietro</button>
       <h1>Nuova stazione</h1>
     </div>
+    ${sezioneImport}
     <div class="card" style="margin-bottom:10px">
       <div class="form-group">
         <label class="form-label">Numero stazione</label>
@@ -1268,32 +1308,6 @@ function viewNuovaStazionePuntuale() {
         <input type="text" id="nome-elemento" placeholder="Es. Pozzetto Via Roma">
       </div>
     </div>
-
-    <div class="card" style="margin-bottom:10px">
-      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
-        Importa da file TXT
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.5">
-        Formato atteso: una riga per stazione, <code style="background:var(--bg);padding:1px 4px;border-radius:3px">numero;nome_elemento</code><br>
-        Es. <code style="background:var(--bg);padding:1px 4px;border-radius:3px">1;Pozzetto Via Roma</code>
-      </div>
-      <label class="btn btn-outline" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-bottom:8px">
-        📂 Carica TXT
-        <input type="file" accept=".txt,text/plain" style="display:none" onchange="importaTxtPuntuale(this)">
-      </label>
-      <div id="txt-preview" style="display:none;margin-top:6px"></div>
-    </div>
-
-    <div id="lista-stazioni-import" style="display:none" class="card" style="margin-bottom:10px">
-      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
-        Stazioni da importare (modificabili)
-      </div>
-      <div id="stazioni-import-list"></div>
-      <button class="btn btn-primary btn-block" onclick="creaTutteStazioniPuntuali()" style="margin-top:10px">
-        ✓ Crea tutte le stazioni
-      </button>
-    </div>
-
     <button class="btn btn-primary btn-block" id="btn-crea-singola" onclick="creaStazionePuntuale()" style="margin-bottom:8px">
       + Aggiungi stazione
     </button>
@@ -1379,6 +1393,8 @@ async function creaTutteStazioniPuntuali() {
     const stazione = _creaStazionePuntualeObj(num, nome);
     isp.stazioni.push(stazione);
   }
+  // Salva il totale atteso per calcolo avanzamento
+  isp._totaleStazioniPuntuali = stazioni.length;
   await salvaIspezione(isp);
   toast(`✓ ${stazioni.length} stazioni create`);
   viewIspezione();
@@ -1590,6 +1606,7 @@ async function viewStazioneAsync() {
       <button class="btn btn-primary btn-sm" onclick="viewNuovaStazione()">+ Nuova</button>
     </div>
 
+    ${!isPuntuale ? `
     <div class="section-head">Dati Generali</div>
     <div class="card" style="margin-bottom:14px">
       <div class="form-group">
@@ -1616,11 +1633,10 @@ async function viewStazioneAsync() {
       ${(s.foto_gen||[]).length ? `<div class="foto-grid" style="justify-content:flex-end">${fotoGenHtml}</div>` : ''}
       ${(s.audio||[]).length   ? `<div>${audioGenHtml}</div>` : ''}
     </div>
-
     <div class="section-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span>Elemento</span>
-      ${!isPuntuale ? `<button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>` : ''}
-    </div>
+      <span>Elementi</span>
+      <button class="btn btn-outline btn-sm" onclick="viewModificaElementi()" style="font-size:11px">✏️ Modifica elementi</button>
+    </div>` : ''}
     ${elemHtml}
   `);
 
